@@ -2,6 +2,7 @@ const CACHE = 'financespro-v1';
 const ASSETS = [
   './gestao-financeira.html',
   './manifest.json',
+  './icon.svg',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css'
 ];
