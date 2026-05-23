@@ -976,6 +976,75 @@ function showLoginScreen() {
   document.getElementById('screen-login').style.display  = 'flex';
 }
 
+// ── Session persistence ──────────────────
+const SESSION_KEY  = 'gf_session';
+
+function saveSession(token, expiresIn) {
+  const expiresAt = Date.now() + (expiresIn - 90) * 1000; // 90s buffer
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }));
+}
+
+function loadSession() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+    if (s && s.token && Date.now() < s.expiresAt) return s.token;
+  } catch(_) {}
+  return null;
+}
+
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+let _refreshTimer = null;
+function scheduleTokenRefresh(expiresIn) {
+  clearTimeout(_refreshTimer);
+  const delay = Math.max((expiresIn - 120) * 1000, 10000); // refresh 2 min before expiry
+  _refreshTimer = setTimeout(() => silentRefresh(), delay);
+}
+
+function silentRefresh() {
+  const clientId = getClientId();
+  if (!clientId || !accessToken) return;
+  const tc = google.accounts.oauth2.initTokenClient({
+    client_id: clientId, scope: SCOPES,
+    callback: (resp) => {
+      if (resp.error) return; // silently ignore — next Drive call will handle
+      accessToken = resp.access_token;
+      saveSession(accessToken, resp.expires_in || 3600);
+      scheduleTokenRefresh(resp.expires_in || 3600);
+    },
+  });
+  tc.requestAccessToken({ prompt: 'none' });
+}
+
+function trySilentSignIn() {
+  const clientId = getClientId();
+  if (!clientId) { document.getElementById('screen-setup').style.display='flex'; return; }
+  setSyncStatus('syncing', 'Restaurando sessão...');
+  // Show a subtle loading state instead of full login screen
+  document.getElementById('screen-login').style.display = 'flex';
+  const tc = google.accounts.oauth2.initTokenClient({
+    client_id: clientId, scope: SCOPES,
+    callback: async (resp) => {
+      if (resp.error) {
+        // Silent auth failed — show login screen normally
+        setSyncStatus('offline', 'Não sincronizado');
+        showLoginScreen();
+        return;
+      }
+      accessToken = resp.access_token;
+      saveSession(accessToken, resp.expires_in || 3600);
+      scheduleTokenRefresh(resp.expires_in || 3600);
+      localStorage.setItem('gf_token_hint', 'has_token');
+      showApp();
+      await loadFromDrive();
+    },
+  });
+  tc.requestAccessToken({ prompt: 'none' });
+}
+// ────────────────────────────────────────
+
 function signIn() {
   const clientId = getClientId();
   if (!clientId) return resetSetup();
@@ -986,7 +1055,9 @@ function signIn() {
     callback: async (resp) => {
       if (resp.error) { showToast('Falha no login: ' + resp.error, 'error'); return; }
       accessToken = resp.access_token;
-      localStorage.setItem('gf_token_hint', 'has_token'); // flag for UX
+      saveSession(accessToken, resp.expires_in || 3600);
+      scheduleTokenRefresh(resp.expires_in || 3600);
+      localStorage.setItem('gf_token_hint', 'has_token');
       showApp();
       await loadFromDrive();
     },
@@ -995,10 +1066,12 @@ function signIn() {
 }
 
 function signOut() {
+  clearTimeout(_refreshTimer);
   if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {});
   accessToken = null;
   driveFileId = null;
   data = { transactions:[], budgets:[], accounts:[] };
+  clearSession();
   localStorage.removeItem('gf_token_hint');
   document.getElementById('app').style.display = 'none';
   showLoginScreen();
@@ -2488,9 +2561,29 @@ function prevMonthStr(ym){
   const clientId=getClientId();
   if(!clientId){
     document.getElementById('screen-setup').style.display='flex';
-  } else {
-    showLoginScreen();
+    return;
   }
+  // 1) Session still valid? Restore immediately — no login needed
+  const savedToken = loadSession();
+  if(savedToken){
+    accessToken = savedToken;
+    showApp();
+    loadFromDrive();
+    // Schedule refresh for whatever time is left on the token
+    try {
+      const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+      const remainingSec = Math.max(Math.floor((s.expiresAt - Date.now()) / 1000), 10);
+      scheduleTokenRefresh(remainingSec + 90); // +90 because saveSession already subtracted 90
+    } catch(_){}
+    return;
+  }
+  // 2) No session but user logged in before — try silent OAuth (no popup)
+  if(localStorage.getItem('gf_token_hint') === 'has_token'){
+    trySilentSignIn();
+    return;
+  }
+  // 3) First visit or after explicit sign-out — show login
+  showLoginScreen();
 })();
 
 // PWA — registra service worker
