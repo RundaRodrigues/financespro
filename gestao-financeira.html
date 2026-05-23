@@ -275,20 +275,28 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 .sidebar-close{display:none;position:absolute;top:16px;right:16px;width:32px;height:32px;border:none;background:rgba(255,255,255,.15);color:#fff;border-radius:8px;font-size:16px;cursor:pointer;align-items:center;justify-content:center}
 
+/* Bottom navigation — hidden on desktop */
+.bottom-nav{display:none}
+.bottom-nav-fab-wrap{display:none}
+
 @media(max-width:768px){
-  /* Safe areas — iPhone Dynamic Island + home bar */
+  /* ── Safe areas (Dynamic Island + home bar) ── */
   .header{
-    padding:12px 16px;
-    padding-top:max(12px,env(safe-area-inset-top));
+    padding:0 16px;
+    height:calc(56px + env(safe-area-inset-top));
+    padding-top:env(safe-area-inset-top);
+    display:flex;align-items:center;justify-content:space-between;
   }
   .content{
     padding:16px;
-    padding-bottom:calc(24px + env(safe-area-inset-bottom));
+    padding-bottom:calc(88px + env(safe-area-inset-bottom));
   }
   .toast{
     left:16px;right:16px;
-    bottom:calc(16px + env(safe-area-inset-bottom));
+    bottom:calc(80px + env(safe-area-inset-bottom));
   }
+
+  /* ── Sidebar ── */
   .sidebar{
     transform:translateX(-100%);
     transition:transform .28s cubic-bezier(.4,0,.2,1);
@@ -302,88 +310,212 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   .sidebar-close{display:flex}
   .main{margin-left:0}
 
-  /* Header */
+  /* ── Header ── */
   .hamburger{display:flex}
-  .header-title{font-size:17px}
-
-  /* Hide text labels in header action buttons on mobile */
+  .header-title{font-size:18px;font-weight:700}
   .header-actions .btn-text{display:none}
-  .header-actions .btn{padding:9px 10px}
+  .header-actions .btn{padding:9px 11px}
+  .header-actions{gap:6px}
 
-  /* Stats: 2 columns */
-  .stats-grid{grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
-  .stat-card{padding:14px}
-  .stat-value{font-size:19px}
-  .stat-icon{width:36px;height:36px;font-size:15px}
+  /* ── Bottom Navigation Bar ── */
+  .bottom-nav{
+    display:flex;
+    position:fixed;
+    bottom:0;left:0;right:0;
+    height:calc(60px + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--card);
+    border-top:1px solid var(--border);
+    z-index:150;
+    box-shadow:0 -4px 20px rgba(0,0,0,.08);
+    align-items:stretch;
+    justify-content:space-around;
+  }
+  body.dark .bottom-nav{box-shadow:0 -4px 20px rgba(0,0,0,.4)}
+  .bottom-nav-item{
+    flex:1;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:3px;
+    border:none;background:transparent;cursor:pointer;
+    color:var(--muted);font-size:10px;font-weight:500;
+    font-family:inherit;padding:0;
+    transition:color .15s;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .bottom-nav-item i{font-size:20px;transition:transform .15s}
+  .bottom-nav-item.active{color:var(--primary)}
+  .bottom-nav-item.active i{transform:scale(1.15)}
+  .bottom-nav-item:active i{transform:scale(.92)}
+  /* Middle slot: leave space for FAB */
+  .bottom-nav-item.nav-fab-slot{flex:0 0 64px}
 
-  /* Layouts: single column */
-  .grid-2,.grid-3{grid-template-columns:1fr;gap:16px}
+  /* ── Floating Action Button ── */
+  .bottom-nav-fab-wrap{
+    display:flex;
+    position:fixed;
+    bottom:calc(28px + env(safe-area-inset-bottom));
+    left:50%;transform:translateX(-50%);
+    z-index:160;
+  }
+  .bottom-nav-fab{
+    width:56px;height:56px;border-radius:50%;
+    background:var(--primary);color:#fff;
+    border:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    font-size:22px;
+    box-shadow:0 4px 16px rgba(99,102,241,.5);
+    transition:transform .15s,box-shadow .15s;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .bottom-nav-fab:active{transform:scale(.92);box-shadow:0 2px 8px rgba(99,102,241,.4)}
+  .fab-menu{
+    position:fixed;bottom:calc(96px + env(safe-area-inset-bottom));left:50%;
+    transform:translateX(-50%);
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+    z-index:155;
+    opacity:0;pointer-events:none;
+    transition:opacity .2s,transform .2s;
+    transform:translateX(-50%) translateY(12px);
+  }
+  .fab-menu.open{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+  .fab-menu-btn{
+    display:flex;align-items:center;gap:10px;
+    padding:12px 20px;border-radius:24px;border:none;cursor:pointer;
+    font-size:15px;font-weight:600;font-family:inherit;
+    box-shadow:0 4px 16px rgba(0,0,0,.18);
+    white-space:nowrap;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .fab-menu-btn.income{background:#10b981;color:#fff}
+  .fab-menu-btn.expense{background:#ef4444;color:#fff}
+  .fab-overlay{display:none;position:fixed;inset:0;z-index:154}
+  .fab-overlay.open{display:block}
 
-  /* Cards */
+  /* ── Stats grid ── */
+  .stats-grid{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+  .stat-card{padding:14px 12px;gap:6px}
+  .stat-value{font-size:20px}
+  .stat-icon{width:38px;height:38px;font-size:15px;margin-bottom:2px}
+  .stat-label{font-size:12px}
+  .stat-change{font-size:11px}
+
+  /* ── Grids ── */
+  .grid-2,.grid-3{grid-template-columns:1fr;gap:14px}
+
+  /* ── Cards ── */
   .card{padding:16px}
   .card-header{margin-bottom:14px;flex-wrap:wrap;gap:8px}
+  .card-title{font-size:15px}
 
-  /* Charts */
-  .chart-wrap{height:190px}
+  /* ── Charts ── */
+  .chart-wrap{height:185px}
 
-  /* Tables: scrollable + compact */
-  td,th{padding:10px 10px;font-size:13px}
+  /* ── Inputs / Forms ── */
+  input,select,textarea{font-size:16px!important;padding:13px 14px}
+  .form-grid{grid-template-columns:1fr}
+  .type-btn{padding:14px}
+  label{font-size:14px}
 
-  /* Inputs: font-size 16px prevents iOS auto-zoom */
-  input,select,textarea{font-size:16px!important;padding:11px 14px}
+  /* ── Tables: hide less important columns, better rows ── */
+  /* Transactions table */
+  #tx-table th:nth-child(3),#tx-table td:nth-child(3),
+  #tx-table th:nth-child(4),#tx-table td:nth-child(4){display:none}
+  /* Income table */
+  #income-table th:nth-child(3),#income-table td:nth-child(3),
+  #income-table th:nth-child(4),#income-table td:nth-child(4){display:none}
+  /* Expenses table */
+  #expenses-table th:nth-child(3),#expenses-table td:nth-child(3),
+  #expenses-table th:nth-child(4),#expenses-table td:nth-child(4){display:none}
+  /* Recent transactions (dashboard) */
+  #recent-tx th:nth-child(2),#recent-tx td:nth-child(2){display:none}
+  /* Better row height for touch targets */
+  td{padding:14px 10px;font-size:14px}
+  th{padding:10px 10px;font-size:11px}
+  /* Amount column: bigger and bolder on mobile */
+  .amt-income,.amt-expense{font-size:15px}
 
-  /* Modal → bottom sheet */
+  /* ── Projections table: compact ── */
+  #proj-table th:nth-child(2),#proj-table td:nth-child(2),
+  #proj-table th:nth-child(6),#proj-table td:nth-child(6){display:none}
+
+  /* ── Dashboard projection chips: horizontal scroll ── */
+  #dash-proj-balances{
+    flex-wrap:nowrap!important;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+    padding:8px 0 12px!important;
+    gap:8px!important;
+  }
+  #dash-proj-balances::-webkit-scrollbar{display:none}
+  #dash-proj-balances>div{
+    flex-shrink:0;
+    min-width:72px!important;
+    padding:8px 6px!important;
+  }
+
+  /* ── Section header rows ── */
+  .flex.items-center.justify-between{flex-wrap:wrap;gap:10px}
+  .flex.items-center.justify-between > div:last-child{display:flex;flex-wrap:wrap;gap:6px}
+
+  /* ── Month nav ── */
+  .month-nav{font-size:14px;padding:7px 12px}
+  .month-nav button{width:32px;height:32px}
+
+  /* ── Modal → full bottom sheet ── */
   .modal-overlay{align-items:flex-end}
   .modal{
     width:100%;max-width:100%;
-    border-radius:20px 20px 0 0;
-    max-height:92vh;
+    border-radius:24px 24px 0 0;
+    max-height:94vh;
     padding-bottom:env(safe-area-inset-bottom);
   }
+  .modal-header{padding:20px 20px 0}
+  .modal-header h2{font-size:18px}
   .modal-body{padding:20px}
-  .modal-footer{padding:0 20px calc(20px + env(safe-area-inset-bottom));flex-direction:column}
-  .modal-footer .btn{width:100%;justify-content:center;padding:13px}
+  .modal-footer{padding:0 20px calc(16px + env(safe-area-inset-bottom));flex-direction:column;gap:8px}
+  .modal-footer .btn{width:100%;justify-content:center;padding:15px;font-size:16px}
+  /* Drag handle on modal */
+  .modal::before{
+    content:'';display:block;
+    width:40px;height:4px;border-radius:4px;
+    background:var(--border);
+    margin:12px auto 0;
+  }
 
-  /* Form: single column */
-  .form-grid{grid-template-columns:1fr}
-
-  /* Section header row: stack on small */
-  .flex.items-center.justify-between{flex-wrap:wrap;gap:10px}
-
-  /* Month nav */
-  .month-nav{font-size:13px;padding:5px 10px}
-
-  /* Setup card */
-  .setup-card{border-radius:16px;padding:28px 20px;margin:16px;max-width:100%}
-
-  /* Dashboard proj chips: 4 per row at most */
-  #dash-proj-balances{gap:4px}
-  #dash-proj-balances>div{min-width:60px!important;padding:5px 3px!important}
-
-  /* Projections table: hide less critical columns on small */
-  #proj-table td:nth-child(5),
-  #proj-table th:nth-child(5){display:none}
-
-  /* Filter bar */
+  /* ── Filter bar ── */
   .filter-bar{gap:8px}
   .search-wrap{min-width:100%;order:-1}
+  .filter-bar select{flex:1;min-width:0}
 
-  /* Account rows touch target */
+  /* ── Account rows ── */
   .account-row{padding:16px 0}
 
-  /* Buttons: larger touch targets */
-  .btn-sm{padding:8px 12px;font-size:13px}
-  .btn-icon{padding:10px}
+  /* ── Buttons ── */
+  .btn-sm{padding:9px 14px;font-size:14px}
+  .btn-icon{padding:11px}
 
-  /* Category group header */
+  /* ── Recurring buttons (section header) ── */
+  #section-recurrings .btn-success,
+  #section-recurrings .btn-danger{font-size:13px;padding:8px 12px}
+
+  /* ── Category group header ── */
   .cat-group-hdr .cat-meta{flex-wrap:wrap;gap:6px}
+
+  /* ── Setup / Login card ── */
+  .setup-card{border-radius:20px;padding:28px 20px;margin:16px;max-width:100%}
+  .fullscreen{padding:16px}
+
+  /* ── Empty state ── */
+  .empty-state{padding:32px 16px}
+  .empty-state i{font-size:36px}
 }
 
 @media(max-width:390px){
-  /* iPhone SE / smaller iPhones */
-  .stats-grid{grid-template-columns:1fr 1fr;gap:8px}
-  .stat-value{font-size:16px}
+  .stats-grid{gap:8px}
+  .stat-value{font-size:17px}
   .content{padding:12px}
+  .card{padding:14px}
 }
 </style>
 </head>
@@ -803,6 +935,45 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 
   </div>
 </main>
+
+<!-- ── Bottom Navigation (mobile only) ── -->
+<nav class="bottom-nav" id="bottom-nav">
+  <button class="bottom-nav-item" id="bn-dashboard" onclick="navigate('dashboard')">
+    <i class="fas fa-home"></i>
+    <span>Início</span>
+  </button>
+  <button class="bottom-nav-item" id="bn-transactions" onclick="navigate('transactions')">
+    <i class="fas fa-list"></i>
+    <span>Lançamentos</span>
+  </button>
+  <!-- FAB slot -->
+  <div class="bottom-nav-item nav-fab-slot"></div>
+  <button class="bottom-nav-item" id="bn-expenses" onclick="navigate('expenses')">
+    <i class="fas fa-arrow-down"></i>
+    <span>Despesas</span>
+  </button>
+  <button class="bottom-nav-item" id="bn-more" onclick="openSidebar()">
+    <i class="fas fa-th-large"></i>
+    <span>Mais</span>
+  </button>
+</nav>
+
+<!-- FAB -->
+<div class="bottom-nav-fab-wrap">
+  <div class="fab-overlay" id="fab-overlay" onclick="closeFab()"></div>
+  <div class="fab-menu" id="fab-menu">
+    <button class="fab-menu-btn income" onclick="closeFab();openTxModal('income')">
+      <i class="fas fa-arrow-up"></i> Nova Receita
+    </button>
+    <button class="fab-menu-btn expense" onclick="closeFab();openTxModal('expense')">
+      <i class="fas fa-arrow-down"></i> Nova Despesa
+    </button>
+  </div>
+  <button class="bottom-nav-fab" id="fab-btn" onclick="toggleFab()">
+    <i class="fas fa-plus" id="fab-icon"></i>
+  </button>
+</div>
+
 </div><!-- /app -->
 
 <!-- ══════════ MODALS ══════════ -->
@@ -1234,6 +1405,10 @@ function navigate(section) {
   if (navEl) navEl.classList.add('active');
   document.getElementById('header-title').textContent = SECTION_TITLES[section];
   currentSection = section;
+  // Sync bottom nav
+  document.querySelectorAll('.bottom-nav-item[id^="bn-"]').forEach(b => b.classList.remove('active'));
+  const bnEl = document.getElementById(`bn-${section}`);
+  if (bnEl) bnEl.classList.add('active');
   if (section === 'dashboard')    { dashMonth=currentMonthStr(); renderDashboard(); }
   if (section === 'transactions') renderTx();
   if (section === 'income')       { incomeMonth=currentMonthStr(); renderIncome(); }
@@ -2495,6 +2670,26 @@ function closeSidebar(){
   document.getElementById('sidebar').classList.remove('mobile-open');
   document.getElementById('sidebar-overlay').classList.remove('mobile-open');
   document.body.style.overflow='';
+}
+function toggleFab() {
+  const menu = document.getElementById('fab-menu');
+  const overlay = document.getElementById('fab-overlay');
+  const icon = document.getElementById('fab-icon');
+  const isOpen = menu.classList.contains('open');
+  if (isOpen) {
+    menu.classList.remove('open');
+    overlay.classList.remove('open');
+    icon.className = 'fas fa-plus';
+  } else {
+    menu.classList.add('open');
+    overlay.classList.add('open');
+    icon.className = 'fas fa-times';
+  }
+}
+function closeFab() {
+  document.getElementById('fab-menu').classList.remove('open');
+  document.getElementById('fab-overlay').classList.remove('open');
+  document.getElementById('fab-icon').className = 'fas fa-plus';
 }
 
 function toggleDark(){
