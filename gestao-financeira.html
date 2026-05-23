@@ -266,6 +266,125 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 .google-btn{width:100%;padding:13px;border:1.5px solid var(--border);border-radius:10px;background:#fff;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all .2s}
 .google-btn:hover{background:var(--bg);border-color:#9ca3af}
 .google-btn img{width:20px;height:20px}
+
+/* ══════════════════════════════════════
+   MOBILE / RESPONSIVE
+══════════════════════════════════════ */
+.hamburger{display:none;flex-direction:column;gap:5px;cursor:pointer;padding:8px;border:none;background:transparent;border-radius:8px;flex-shrink:0}
+.hamburger span{display:block;width:22px;height:2px;background:var(--text);border-radius:2px;transition:all .25s}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.sidebar-close{display:none;position:absolute;top:16px;right:16px;width:32px;height:32px;border:none;background:rgba(255,255,255,.15);color:#fff;border-radius:8px;font-size:16px;cursor:pointer;align-items:center;justify-content:center}
+
+@media(max-width:768px){
+  /* Safe areas — iPhone Dynamic Island + home bar */
+  .header{
+    padding:12px 16px;
+    padding-top:max(12px,env(safe-area-inset-top));
+  }
+  .content{
+    padding:16px;
+    padding-bottom:calc(24px + env(safe-area-inset-bottom));
+  }
+  .toast{
+    left:16px;right:16px;
+    bottom:calc(16px + env(safe-area-inset-bottom));
+  }
+  .sidebar{
+    transform:translateX(-100%);
+    transition:transform .28s cubic-bezier(.4,0,.2,1);
+    z-index:200;
+    padding-bottom:env(safe-area-inset-bottom);
+    width:280px;
+  }
+  .sidebar.mobile-open{transform:translateX(0)}
+  .sidebar-overlay{display:block;opacity:0;pointer-events:none;transition:opacity .28s}
+  .sidebar-overlay.mobile-open{opacity:1;pointer-events:auto}
+  .sidebar-close{display:flex}
+  .main{margin-left:0}
+
+  /* Header */
+  .hamburger{display:flex}
+  .header-title{font-size:17px}
+
+  /* Hide text labels in header action buttons on mobile */
+  .header-actions .btn-text{display:none}
+  .header-actions .btn{padding:9px 10px}
+
+  /* Stats: 2 columns */
+  .stats-grid{grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .stat-card{padding:14px}
+  .stat-value{font-size:19px}
+  .stat-icon{width:36px;height:36px;font-size:15px}
+
+  /* Layouts: single column */
+  .grid-2,.grid-3{grid-template-columns:1fr;gap:16px}
+
+  /* Cards */
+  .card{padding:16px}
+  .card-header{margin-bottom:14px;flex-wrap:wrap;gap:8px}
+
+  /* Charts */
+  .chart-wrap{height:190px}
+
+  /* Tables: scrollable + compact */
+  td,th{padding:10px 10px;font-size:13px}
+
+  /* Inputs: font-size 16px prevents iOS auto-zoom */
+  input,select,textarea{font-size:16px!important;padding:11px 14px}
+
+  /* Modal → bottom sheet */
+  .modal-overlay{align-items:flex-end}
+  .modal{
+    width:100%;max-width:100%;
+    border-radius:20px 20px 0 0;
+    max-height:92vh;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .modal-body{padding:20px}
+  .modal-footer{padding:0 20px calc(20px + env(safe-area-inset-bottom));flex-direction:column}
+  .modal-footer .btn{width:100%;justify-content:center;padding:13px}
+
+  /* Form: single column */
+  .form-grid{grid-template-columns:1fr}
+
+  /* Section header row: stack on small */
+  .flex.items-center.justify-between{flex-wrap:wrap;gap:10px}
+
+  /* Month nav */
+  .month-nav{font-size:13px;padding:5px 10px}
+
+  /* Setup card */
+  .setup-card{border-radius:16px;padding:28px 20px;margin:16px;max-width:100%}
+
+  /* Dashboard proj chips: 4 per row at most */
+  #dash-proj-balances{gap:4px}
+  #dash-proj-balances>div{min-width:60px!important;padding:5px 3px!important}
+
+  /* Projections table: hide less critical columns on small */
+  #proj-table td:nth-child(5),
+  #proj-table th:nth-child(5){display:none}
+
+  /* Filter bar */
+  .filter-bar{gap:8px}
+  .search-wrap{min-width:100%;order:-1}
+
+  /* Account rows touch target */
+  .account-row{padding:16px 0}
+
+  /* Buttons: larger touch targets */
+  .btn-sm{padding:8px 12px;font-size:13px}
+  .btn-icon{padding:10px}
+
+  /* Category group header */
+  .cat-group-hdr .cat-meta{flex-wrap:wrap;gap:6px}
+}
+
+@media(max-width:390px){
+  /* iPhone SE / smaller iPhones */
+  .stats-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .stat-value{font-size:16px}
+  .content{padding:12px}
+}
 </style>
 </head>
 <body>
@@ -330,7 +449,9 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 <div id="app" style="display:none;width:100%">
 
 <!-- Sidebar -->
-<aside class="sidebar">
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+<aside class="sidebar" id="sidebar">
+  <button class="sidebar-close" onclick="closeSidebar()"><i class="fas fa-times"></i></button>
   <div class="sidebar-logo">
     <h1><i class="fas fa-chart-pie"></i> FinancesPro</h1>
     <p>Gestão Financeira Pessoal</p>
@@ -386,14 +507,19 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 <!-- Main -->
 <main class="main">
   <header class="header">
-    <div class="header-title" id="header-title">Dashboard</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="hamburger" onclick="openSidebar()" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="header-title" id="header-title">Dashboard</div>
+    </div>
     <div class="header-actions">
       <button class="btn btn-outline btn-icon" id="dark-toggle" onclick="toggleDark()" title="Alternar modo escuro">
         <i class="fas fa-moon  icon-for-light"></i>
         <i class="fas fa-sun   icon-for-dark"></i>
       </button>
-      <button class="btn btn-success" onclick="openTxModal('income')"><i class="fas fa-plus"></i> Receita</button>
-      <button class="btn btn-danger" onclick="openTxModal('expense')"><i class="fas fa-minus"></i> Despesa</button>
+      <button class="btn btn-success" onclick="openTxModal('income')"><i class="fas fa-plus"></i><span class="btn-text"> Receita</span></button>
+      <button class="btn btn-danger" onclick="openTxModal('expense')"><i class="fas fa-minus"></i><span class="btn-text"> Despesa</span></button>
     </div>
   </header>
 
@@ -1039,6 +1165,7 @@ async function syncNow() {
 //  NAVIGATION
 // ═══════════════════════════════════════
 function navigate(section) {
+  if(window.innerWidth<=768) closeSidebar();
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`section-${section}`).classList.add('active');
@@ -2298,6 +2425,17 @@ document.querySelectorAll('.modal-overlay').forEach(o=>{
 // ═══════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════
+function openSidebar(){
+  document.getElementById('sidebar').classList.add('mobile-open');
+  document.getElementById('sidebar-overlay').classList.add('mobile-open');
+  document.body.style.overflow='hidden';
+}
+function closeSidebar(){
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebar-overlay').classList.remove('mobile-open');
+  document.body.style.overflow='';
+}
+
 function toggleDark(){
   const dark = document.body.classList.toggle('dark');
   localStorage.setItem('gf_dark', dark ? '1' : '0');
