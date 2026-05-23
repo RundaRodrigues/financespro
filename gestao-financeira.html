@@ -977,71 +977,51 @@ function showLoginScreen() {
 }
 
 // ── Session persistence ──────────────────
-const SESSION_KEY  = 'gf_session';
+// Token is stored in localStorage so it survives F5, tab close, and browser restarts.
+// It's scoped to this origin and carries an expiry timestamp — cleared on sign-out.
+const SESSION_KEY = 'gf_token_v2';
 
 function saveSession(token, expiresIn) {
-  const expiresAt = Date.now() + (expiresIn - 90) * 1000; // 90s buffer
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }));
+  const expiresAt = Date.now() + (expiresIn - 60) * 1000; // 60s safety buffer
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt })); } catch(_) {}
 }
 
 function loadSession() {
   try {
-    const s = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
     if (s && s.token && Date.now() < s.expiresAt) return s.token;
   } catch(_) {}
   return null;
 }
 
 function clearSession() {
-  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
 }
 
 let _refreshTimer = null;
 function scheduleTokenRefresh(expiresIn) {
   clearTimeout(_refreshTimer);
-  const delay = Math.max((expiresIn - 120) * 1000, 10000); // refresh 2 min before expiry
+  // Refresh 2 minutes before expiry, minimum 30s from now
+  const delay = Math.max((expiresIn - 120) * 1000, 30000);
   _refreshTimer = setTimeout(() => silentRefresh(), delay);
 }
 
 function silentRefresh() {
   const clientId = getClientId();
-  if (!clientId || !accessToken) return;
-  const tc = google.accounts.oauth2.initTokenClient({
-    client_id: clientId, scope: SCOPES,
-    callback: (resp) => {
-      if (resp.error) return; // silently ignore — next Drive call will handle
-      accessToken = resp.access_token;
-      saveSession(accessToken, resp.expires_in || 3600);
-      scheduleTokenRefresh(resp.expires_in || 3600);
-    },
-  });
-  tc.requestAccessToken({ prompt: 'none' });
-}
-
-function trySilentSignIn() {
-  const clientId = getClientId();
-  if (!clientId) { document.getElementById('screen-setup').style.display='flex'; return; }
-  setSyncStatus('syncing', 'Restaurando sessão...');
-  // Show a subtle loading state instead of full login screen
-  document.getElementById('screen-login').style.display = 'flex';
-  const tc = google.accounts.oauth2.initTokenClient({
-    client_id: clientId, scope: SCOPES,
-    callback: async (resp) => {
-      if (resp.error) {
-        // Silent auth failed — show login screen normally
-        setSyncStatus('offline', 'Não sincronizado');
-        showLoginScreen();
-        return;
-      }
-      accessToken = resp.access_token;
-      saveSession(accessToken, resp.expires_in || 3600);
-      scheduleTokenRefresh(resp.expires_in || 3600);
-      localStorage.setItem('gf_token_hint', 'has_token');
-      showApp();
-      await loadFromDrive();
-    },
-  });
-  tc.requestAccessToken({ prompt: 'none' });
+  if (!clientId) return;
+  if (typeof google === 'undefined' || !google.accounts) return;
+  try {
+    const tc = google.accounts.oauth2.initTokenClient({
+      client_id: clientId, scope: SCOPES,
+      callback: (resp) => {
+        if (resp.error || !resp.access_token) return;
+        accessToken = resp.access_token;
+        saveSession(accessToken, resp.expires_in || 3600);
+        scheduleTokenRefresh(resp.expires_in || 3600);
+      },
+    });
+    tc.requestAccessToken({ prompt: 'none' });
+  } catch(_) {}
 }
 // ────────────────────────────────────────
 
@@ -1139,13 +1119,21 @@ function setSyncStatus(state, label) {
   lbl.textContent = label;
 }
 
-async function driveRequest(url, options = {}) {
+async function driveRequest(url, options = {}, _retry = false) {
   const resp = await fetch(url, {
     ...options,
     headers: { Authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
   });
   if (!resp.ok) {
-    if (resp.status === 401) { showToast('Sessão expirada. Faça login novamente.', 'error'); signOut(); }
+    if (resp.status === 401 && !_retry) {
+      // Token rejected — clear stored session and ask user to log in again
+      clearSession();
+      localStorage.removeItem('gf_token_hint');
+      accessToken = null;
+      showToast('Sessão expirada. Faça login novamente.', 'error');
+      showLoginScreen();
+      document.getElementById('app').style.display = 'none';
+    }
     throw new Error(`Drive API error ${resp.status}`);
   }
   return resp;
@@ -2563,26 +2551,21 @@ function prevMonthStr(ym){
     document.getElementById('screen-setup').style.display='flex';
     return;
   }
-  // 1) Session still valid? Restore immediately — no login needed
+  // Restore saved token (localStorage — survives F5, tab close, restarts)
   const savedToken = loadSession();
   if(savedToken){
     accessToken = savedToken;
     showApp();
     loadFromDrive();
-    // Schedule refresh for whatever time is left on the token
+    // Schedule auto-refresh for remaining token lifetime
     try {
-      const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
-      const remainingSec = Math.max(Math.floor((s.expiresAt - Date.now()) / 1000), 10);
-      scheduleTokenRefresh(remainingSec + 90); // +90 because saveSession already subtracted 90
+      const s = JSON.parse(localStorage.getItem(SESSION_KEY));
+      const remainingSec = Math.max(Math.floor((s.expiresAt - Date.now()) / 1000) + 60, 30);
+      scheduleTokenRefresh(remainingSec);
     } catch(_){}
     return;
   }
-  // 2) No session but user logged in before — try silent OAuth (no popup)
-  if(localStorage.getItem('gf_token_hint') === 'has_token'){
-    trySilentSignIn();
-    return;
-  }
-  // 3) First visit or after explicit sign-out — show login
+  // No valid token — show login
   showLoginScreen();
 })();
 
