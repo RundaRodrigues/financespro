@@ -11,8 +11,14 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FinancesPro">
 <link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.png">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<!-- iOS splash screens (portrait) -->
+<link rel="apple-touch-startup-image" media="(device-width:430px)and(device-height:932px)and(-webkit-device-pixel-ratio:3)" href="splash-1290x2796.png">
+<link rel="apple-touch-startup-image" media="(device-width:393px)and(device-height:852px)and(-webkit-device-pixel-ratio:3)" href="splash-1179x2556.png">
+<link rel="apple-touch-startup-image" media="(device-width:390px)and(device-height:844px)and(-webkit-device-pixel-ratio:3)" href="splash-1170x2532.png">
+<link rel="apple-touch-startup-image" media="(device-width:375px)and(device-height:812px)and(-webkit-device-pixel-ratio:3)" href="splash-1125x2436.png">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
@@ -25,7 +31,7 @@
   --shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06);
   --shadow-md:0 4px 6px -1px rgba(0,0,0,.1);--radius:12px
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;transition:background .2s,color .2s}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;min-height:100dvh;transition:background .2s,color .2s}
 
 body.dark{
   --bg:#0f172a;--card:#1e293b;--sidebar:#0a0f1e;--sidebar-hover:#1e293b;
@@ -65,9 +71,28 @@ body.dark .tab-btn.active{background:#1e293b;color:var(--primary)}
 body.dark .icon-for-light{display:none}
 body.dark .icon-for-dark{display:inline}
 
+/* ── PWA / Standalone splash ── */
+#pwa-splash{
+  position:fixed;inset:0;z-index:99999;
+  background:linear-gradient(150deg,#0d0b24 0%,#1e1b4b 40%,#312e81 80%,#4f46e5 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  transition:opacity .45s ease,visibility .45s ease;
+}
+#pwa-splash.hidden{opacity:0;visibility:hidden}
+#pwa-splash .splash-logo{width:96px;height:96px;animation:splashPop .5s cubic-bezier(.34,1.56,.64,1) both}
+#pwa-splash .splash-name{font-size:30px;font-weight:800;color:#fff;letter-spacing:-.5px;animation:splashFade .5s .2s both}
+#pwa-splash .splash-sub{font-size:14px;color:rgba(255,255,255,.45);animation:splashFade .5s .35s both}
+#pwa-splash .splash-dots{display:flex;gap:6px;margin-top:16px;animation:splashFade .5s .5s both}
+#pwa-splash .splash-dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.3);animation:splashPulse 1.2s .6s infinite ease-in-out}
+#pwa-splash .splash-dot:nth-child(2){animation-delay:.75s}
+#pwa-splash .splash-dot:nth-child(3){animation-delay:.9s}
+@keyframes splashPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes splashFade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes splashPulse{0%,100%{background:rgba(255,255,255,.2);transform:scale(1)}50%{background:rgba(255,255,255,.7);transform:scale(1.3)}}
+
 /* ── Sidebar ── */
-.sidebar{width:250px;background:var(--sidebar);display:flex;flex-direction:column;position:fixed;height:100vh;z-index:100}
-.sidebar-logo{padding:24px 20px;border-bottom:1px solid rgba(255,255,255,.1)}
+.sidebar{width:250px;background:var(--sidebar);display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;height:100dvh;z-index:100}
+.sidebar-logo{padding:24px 20px;padding-top:max(24px,calc(env(safe-area-inset-top) + 16px));border-bottom:1px solid rgba(255,255,255,.1)}
 .sidebar-logo h1{color:#fff;font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px}
 .sidebar-logo h1 i{color:#818cf8}
 .sidebar-logo p{color:rgba(255,255,255,.4);font-size:12px;margin-top:2px}
@@ -93,7 +118,7 @@ body.dark .icon-for-dark{display:inline}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ── Main ── */
-.main{margin-left:250px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+.main{margin-left:250px;flex:1;display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 .header{background:#fff;border-bottom:1px solid var(--border);padding:16px 32px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
 .header-title{font-size:20px;font-weight:600}
 .header-actions{display:flex;gap:10px}
@@ -251,7 +276,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 .divider{height:1px;background:var(--border);margin:16px 0}
 
 /* ── Setup / Login screen ── */
-.fullscreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e1b4b,#312e81)}
+.fullscreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e1b4b,#312e81);padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 .setup-card{background:#fff;border-radius:20px;padding:40px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .setup-card h2{font-size:24px;font-weight:700;margin-bottom:6px}
 .setup-card p{color:var(--muted);font-size:14px;margin-bottom:24px;line-height:1.6}
@@ -520,6 +545,35 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 </style>
 </head>
 <body>
+
+<!-- ══════════ PWA SPLASH SCREEN ══════════ -->
+<div id="pwa-splash">
+  <svg class="splash-logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="sbg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#818cf8"/>
+        <stop offset="100%" stop-color="#a78bfa"/>
+      </linearGradient>
+      <linearGradient id="sarea" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="white" stop-opacity=".28"/>
+        <stop offset="100%" stop-color="white" stop-opacity=".04"/>
+      </linearGradient>
+    </defs>
+    <rect width="100" height="100" rx="22" fill="url(#sbg)"/>
+    <polygon points="15,72 32,55 50,62 68,38 85,24 85,80 15,80" fill="url(#sarea)"/>
+    <polyline points="15,72 32,55 50,62 68,38 85,24" fill="none" stroke="white" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" opacity=".95"/>
+    <circle cx="85" cy="24" r="7" fill="white" opacity=".2"/>
+    <circle cx="85" cy="24" r="5" fill="white"/>
+    <circle cx="85" cy="24" r="2.5" fill="#6366f1"/>
+  </svg>
+  <div class="splash-name">FinancesPro</div>
+  <div class="splash-sub">Gestão Financeira Pessoal</div>
+  <div class="splash-dots">
+    <div class="splash-dot"></div>
+    <div class="splash-dot"></div>
+    <div class="splash-dot"></div>
+  </div>
+</div>
 
 <!-- ══════════ SETUP SCREEN ══════════ -->
 <div class="fullscreen" id="screen-setup">
@@ -2741,9 +2795,19 @@ function prevMonthStr(ym){
     document.body.classList.add('dark');
   }
   selectTxType('income');
+
+  // Hide splash screen after a short delay (gives app time to init)
+  function hideSplash() {
+    const splash = document.getElementById('pwa-splash');
+    if (!splash) return;
+    splash.classList.add('hidden');
+    setTimeout(() => splash.remove(), 500);
+  }
+
   const clientId=getClientId();
   if(!clientId){
     document.getElementById('screen-setup').style.display='flex';
+    setTimeout(hideSplash, 600);
     return;
   }
   // Restore saved token (localStorage — survives F5, tab close, restarts)
@@ -2751,6 +2815,7 @@ function prevMonthStr(ym){
   if(savedToken){
     accessToken = savedToken;
     showApp();
+    setTimeout(hideSplash, 700);
     loadFromDrive();
     // Schedule auto-refresh for remaining token lifetime
     try {
@@ -2762,6 +2827,7 @@ function prevMonthStr(ym){
   }
   // No valid token — show login
   showLoginScreen();
+  setTimeout(hideSplash, 600);
 })();
 
 // PWA — registra service worker

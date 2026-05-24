@@ -1,7 +1,12 @@
-const CACHE = 'financespro-v3';
+const CACHE = 'financespro-v4';
 const ASSETS = [
   './manifest.json',
   './icon.svg',
+  './icon.png',
+  './splash-1290x2796.png',
+  './splash-1179x2556.png',
+  './splash-1170x2532.png',
+  './splash-1125x2436.png',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css'
 ];
@@ -25,7 +30,7 @@ self.addEventListener('fetch', e => {
   const isHTML = url.pathname.endsWith('.html') || url.pathname.endsWith('/');
 
   if (isHTML) {
-    // HTML: network-first so code updates are always served immediately
+    // HTML: network-first so code updates are always reflected immediately
     e.respondWith(
       fetch(e.request)
         .then(res => {
@@ -37,7 +42,7 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Everything else: cache-first (JS libs, icons, CSS)
+  // Everything else: cache-first (icons, splash screens, JS libs, CSS)
   e.respondWith(
     caches.match(e.request).then(cached => {
       const network = fetch(e.request).then(res => {
