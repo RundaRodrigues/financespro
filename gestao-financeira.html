@@ -735,7 +735,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline btn-sm" id="dash-cycle-btn" onclick="toggleSalaryCycleDash()" title="Ciclo salarial: recebo em mês seguinte ao trabalhado"><i class="fas fa-rotate"></i> <span id="dash-cycle-lbl">Ciclo +1</span></button>
-          <button class="btn btn-outline btn-sm" onclick="dashMonth=currentMonthStr();renderDashboard()">
+          <button class="btn btn-outline btn-sm" onclick="anchorMonth=currentMonthStr();refreshCurrentSection()">
             <i class="fas fa-calendar-check"></i> Mês atual
           </button>
         </div>
@@ -801,7 +801,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
           <button onclick="changeTypeMonth('income',1)"><i class="fas fa-chevron-right" style="font-size:11px"></i></button>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-outline btn-sm" onclick="incomeMonth=currentMonthStr();renderIncome()"><i class="fas fa-calendar-check"></i> Mês atual</button>
+          <button class="btn btn-outline btn-sm" onclick="anchorMonth=currentMonthStr();renderIncome()"><i class="fas fa-calendar-check"></i> Mês atual</button>
           <button class="btn btn-outline btn-sm" id="cycle-toggle-btn" onclick="toggleSalaryCycle()" title="Ciclo salarial: recebo em mês seguinte ao trabalhado"><i class="fas fa-rotate"></i> <span id="cycle-toggle-lbl">Ciclo +1</span></button>
           <button class="btn btn-success btn-sm" onclick="openTxModal('income')"><i class="fas fa-plus"></i> Nova Entrada</button>
         </div>
@@ -842,7 +842,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
           <button onclick="changeTypeMonth('expenses',1)"><i class="fas fa-chevron-right" style="font-size:11px"></i></button>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-outline btn-sm" onclick="expensesMonth=currentMonthStr();renderExpenses()"><i class="fas fa-calendar-check"></i> Mês atual</button>
+          <button class="btn btn-outline btn-sm" onclick="anchorMonth=currentMonthStr();renderExpenses()"><i class="fas fa-calendar-check"></i> Mês atual</button>
           <button class="btn btn-danger btn-sm" onclick="openTxModal('expense')"><i class="fas fa-plus"></i> Nova Despesa</button>
         </div>
       </div>
@@ -1178,11 +1178,11 @@ let data = { transactions:[], budgets:[], accounts:[], recurrings:[], paidVirtua
 let accessToken = null;
 let driveFileId  = null;
 let currentSection = 'dashboard';
-let dashMonth     = currentMonthStr();
+// Mês-âncora global: funciona como o "mês atual" de TODO o app.
+// Todas as telas baseadas em mês (Dashboard, Entradas, Despesas, Orçamento)
+// compartilham este valor e ele persiste ao navegar entre seções.
+let anchorMonth   = currentMonthStr();
 let projYear      = new Date().getFullYear();
-let incomeMonth   = currentMonthStr();
-let expensesMonth = currentMonthStr();
-let budgetMonth   = currentMonthStr();
 let editingTxId  = null;
 let editingBudId = null;
 let salaryCycleOffset = localStorage.getItem('gf_salary_cycle')!=='0';
@@ -1477,12 +1477,13 @@ function navigate(section) {
   document.querySelectorAll('.bottom-nav-item[id^="bn-"]').forEach(b => b.classList.remove('active'));
   const bnEl = document.getElementById(`bn-${section}`);
   if (bnEl) bnEl.classList.add('active');
-  if (section === 'dashboard')    { dashMonth=currentMonthStr(); renderDashboard(); }
+  // O mês-âncora global persiste ao navegar — não reseta para o mês real.
+  if (section === 'dashboard')    renderDashboard();
   if (section === 'transactions') renderTx();
-  if (section === 'income')       { incomeMonth=currentMonthStr(); renderIncome(); }
-  if (section === 'expenses')     { expensesMonth=currentMonthStr(); renderExpenses(); }
+  if (section === 'income')       renderIncome();
+  if (section === 'expenses')     renderExpenses();
   if (section === 'recurrings')   renderRecurrings();
-  if (section === 'projections')  renderProjections();
+  if (section === 'projections')  { projYear = +anchorMonth.split('-')[0]; renderProjections(); }
   if (section === 'budget')       renderBudget();
   if (section === 'accounts')     renderAccounts();
   if (section === 'reports')      renderReports();
@@ -1497,6 +1498,14 @@ function fmt(v)       { return new Intl.NumberFormat('pt-BR',{style:'currency',c
 function fmtDate(d)   { if(!d)return''; const[y,m,day]=d.split('-'); return`${day}/${m}/${y}`; }
 function monthLbl(ym) { const[y,m]=ym.split('-'); return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m-1]+'/'+y.slice(2); }
 function monthFull(ym){ const[y,m]=ym.split('-'); return ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][+m-1]+' de '+y; }
+// Define o rótulo de um seletor de mês, sinalizando quando o mês escolhido
+// está sendo usado como "mês atual" do app (diferente do mês real de hoje).
+function setMonthLabel(elId, ym){
+  const el = document.getElementById(elId); if(!el) return;
+  const badge = ym === currentMonthStr() ? '' :
+    ` <span style="font-size:10px;color:var(--primary);font-weight:600;background:rgba(99,102,241,.12);padding:1px 7px;border-radius:6px;vertical-align:middle" title="Este mês está sendo usado como o 'mês atual' em todo o app">como mês atual</span>`;
+  el.innerHTML = monthFull(ym) + badge;
+}
 function todayStr()   { return new Date().toISOString().split('T')[0]; }
 function currentMonthStr() { return todayStr().substr(0,7); }
 function uid()        { return Date.now().toString(36)+Math.random().toString(36).substr(2); }
@@ -1541,14 +1550,14 @@ function monthsAround(centerMonth, n){
 //  DASHBOARD
 // ═══════════════════════════════════════
 function changeDashMonth(d){
-  const [y,m]=dashMonth.split('-').map(Number);
+  const [y,m]=anchorMonth.split('-').map(Number);
   const dt=new Date(y,m-1+d,1);
-  dashMonth=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+  anchorMonth=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
   renderDashboard();
 }
 
 function renderDashboard(){
-  const today=todayStr(), cm=dashMonth;
+  const today=todayStr(), cm=anchorMonth;
   const txAll=getAllEffectiveTx(), accs=data.accounts;
   const mTx=getEffectiveTxForMonth(cm);
   const incM=mTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
@@ -1564,7 +1573,7 @@ function renderDashboard(){
   const overdueN=pendAccs.filter(a=>a.dueDate<today).length;
   const upcomingN=pendAccs.filter(a=>a.dueDate>=today&&a.dueDate<=addDays(today,7)).length;
 
-  document.getElementById('dash-month-lbl').textContent=monthFull(cm);
+  setMonthLabel('dash-month-lbl', cm);
   document.getElementById('sidebar-balance').textContent=fmt(
     txAll.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0)-
     txAll.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0)
@@ -1614,7 +1623,7 @@ function renderDashboard(){
     const dt=new Date(y,mo-1+i,1);
     return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
   });
-  const today2=currentMonthStr();
+  const today2=currentMonthStr();   // mês real — define a régua de real vs. projetado (esmaecido)
   destroyChart('chart-monthly');
   const ctxM=document.getElementById('chart-monthly');
   if(ctxM){
@@ -1626,7 +1635,7 @@ function renderDashboard(){
       data:{
         labels:projMonths.map(m=>{
           const lbl=monthLbl(m);
-          return m===today2?lbl+' ◀':lbl;
+          return m===cm?lbl+' ◀':lbl;   // ◀ marca o mês-âncora (o "agora" selecionado)
         }),
         datasets:[
           {label:'Receitas',data:pInc,backgroundColor:isFut.map(f=>f?'rgba(16,185,129,.35)':'rgba(16,185,129,.85)'),borderRadius:5},
@@ -1651,7 +1660,7 @@ function renderDashboard(){
       runBal+=(pInc[i]-pExp[i]);        // acumula para o próximo
       const pos=startBal>=0;
       const isFuture=m>today2;
-      const isCur=m===today2;
+      const isCur=m===cm;   // destaque no mês-âncora (o "agora" selecionado)
       const refLbl=salaryCycleOffset?`<div style="font-size:9px;color:var(--primary);margin-top:1px;opacity:.8">ref. ${monthLbl(prevMonthStr(m))}</div>`:'';
       return `<div style="flex:1;min-width:80px;text-align:center;background:${pos?'rgba(16,185,129,.1)':'rgba(239,68,68,.1)'};border:1.5px solid ${isCur?'var(--primary)':pos?'rgba(16,185,129,.3)':'rgba(239,68,68,.3)'};border-radius:8px;padding:7px 4px;${isFuture?'opacity:.75':''}">
         <div style="font-size:10px;color:var(--muted)">${monthLbl(m)}${isCur?' ◀':''}</div>
@@ -1720,18 +1729,16 @@ function renderTx(){
 //  INCOME & EXPENSES SCREENS
 // ═══════════════════════════════════════
 function changeTypeMonth(type, d) {
-  const key = type === 'income' ? 'incomeMonth' : 'expensesMonth';
-  const cur = type === 'income' ? incomeMonth : expensesMonth;
-  const [y,m] = cur.split('-').map(Number);
+  const [y,m] = anchorMonth.split('-').map(Number);
   const dt = new Date(y, m-1+d, 1);
-  const val = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
-  if (type === 'income') { incomeMonth = val; renderIncome(); }
-  else                   { expensesMonth = val; renderExpenses(); }
+  anchorMonth = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+  if (type === 'income') renderIncome();
+  else                   renderExpenses();
 }
 
 function renderTypeScreen(type) {
   const isIncome = type === 'income';
-  const month    = isIncome ? incomeMonth : expensesMonth;
+  const month    = anchorMonth;
   const prefix   = isIncome ? 'income' : 'expenses';
   const mTx      = getEffectiveTxForMonth(month).filter(t => t.type === type);
   const allType  = getAllEffectiveTx().filter(t => t.type === type);
@@ -1756,7 +1763,7 @@ function renderTypeScreen(type) {
   const ic    = isIncome ? 'ic-green' : 'ic-red';
   const arrow = isIncome ? 'fa-arrow-up' : 'fa-arrow-down';
 
-  document.getElementById(`${prefix}-month-lbl`).textContent = monthFull(month);
+  setMonthLabel(`${prefix}-month-lbl`, month);
 
   // Ciclo salarial: lembrete na tela de Entradas
   if(isIncome){
@@ -2068,7 +2075,7 @@ function getTxForMonthProjected(ym) {
 }
 
 function renderProjections() {
-  const cm    = currentMonthStr();
+  const cm    = anchorMonth;   // marcador "mês atual" segue o mês-âncora global
   const today = todayStr();
   document.getElementById('proj-year-lbl').textContent = projYear;
 
@@ -2236,17 +2243,17 @@ function renderProjections() {
 //  BUDGET
 // ═══════════════════════════════════════
 function changeBudgetMonth(d){
-  const [y,m]=budgetMonth.split('-').map(Number);
+  const [y,m]=anchorMonth.split('-').map(Number);
   const dt=new Date(y,m-1+d,1);
-  budgetMonth=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+  anchorMonth=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
   renderBudget();
 }
 
 function renderBudget(){
-  document.getElementById('budget-month-lbl').textContent=monthFull(budgetMonth);
-  const buds=data.budgets.filter(b=>b.month===budgetMonth);
-  const txM=getEffectiveTxForMonth(budgetMonth).filter(t=>t.type==='expense');
-  const incM=getEffectiveTxForMonth(budgetMonth).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  setMonthLabel('budget-month-lbl', anchorMonth);
+  const buds=data.budgets.filter(b=>b.month===anchorMonth);
+  const txM=getEffectiveTxForMonth(anchorMonth).filter(t=>t.type==='expense');
+  const incM=getEffectiveTxForMonth(anchorMonth).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const totalBud=buds.reduce((s,b)=>s+b.limit,0);
   const totalSpent=txM.reduce((s,t)=>s+t.amount,0);
 
@@ -2589,9 +2596,9 @@ function saveBudget(){
     const i=data.budgets.findIndex(b=>b.id===editingBudId);
     data.budgets[i]={...data.budgets[i],category:cat,limit};
   } else {
-    const ex=data.budgets.findIndex(b=>b.month===budgetMonth&&b.category===cat);
+    const ex=data.budgets.findIndex(b=>b.month===anchorMonth&&b.category===cat);
     if(ex>=0) data.budgets[ex].limit=limit;
-    else data.budgets.push({id:uid(),month:budgetMonth,category:cat,limit});
+    else data.budgets.push({id:uid(),month:anchorMonth,category:cat,limit});
   }
   closeModal('modal-budget');
   scheduleSave();
