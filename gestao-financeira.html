@@ -2085,9 +2085,11 @@ function togglePaid(id) {
 function changeProjYear(d){ projYear += d; renderProjections(); }
 
 function getTxForMonthProjected(ym) {
-  const cm = currentMonthStr();
-  if (ym <= cm) return getEffectiveTxForMonth(ym);           // past/current: real data
-  return getRecurringVirtualForMonth(ym);                    // future: recurring only
+  // Passado/atual: dados reais + recorrências. Futuro: recorrências projetadas
+  // E TAMBÉM os lançamentos reais já agendados para aquele mês (ex.: uma despesa
+  // que você sabe que só vai pagar em agosto). getEffectiveTxForMonth já combina
+  // os lançamentos reais do mês com as recorrências virtuais.
+  return getEffectiveTxForMonth(ym);
 }
 
 function renderProjections() {
