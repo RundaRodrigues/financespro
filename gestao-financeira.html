@@ -2046,12 +2046,24 @@ function editRecurring(id){
 }
 
 function deleteRecurring(id){
-  if(!confirm('Excluir esta recorrência? Ela será removida de todos os meses.')) return;
-  data.recurrings = (data.recurrings||[]).filter(r=>r.id!==id);
+  if(!confirm('Excluir esta recorrência? Ela será removida de todos os meses, incluindo os lançamentos já registrados dela.')) return;
+  removeRecurringEverywhere(id);
   scheduleSave();
   showToast('Recorrência excluída!');
   renderRecurrings();
   updateSidebarBalance();
+  refreshCurrentSection();
+}
+
+// Remove uma recorrência de TODOS os lugares: o template, as transações reais
+// já materializadas a partir dela (1º mês e ocorrências editadas) e as marcações
+// de "pago" das ocorrências virtuais.
+function removeRecurringEverywhere(id){
+  data.recurrings   = (data.recurrings||[]).filter(r=>r.id!==id);
+  data.transactions = (data.transactions||[]).filter(t=>t.recurringId!==id);
+  if(data.paidVirtuals){
+    Object.keys(data.paidVirtuals).forEach(k=>{ if(k.startsWith(`rec_${id}_`)) delete data.paidVirtuals[k]; });
+  }
 }
 
 // ═══════════════════════════════════════
@@ -2561,10 +2573,9 @@ function deleteTx(id){
     // extract recurringId: format is rec_{id}_{month}
     const parts   = id.split('_');
     // rec_ + id (could contain _) + _YYYY-MM
-    const monthPart = parts[parts.length-1]; // YYYY-MM
     const recurringId = parts.slice(1, parts.length-1).join('_');
-    if(!confirm('Excluir esta recorrência de todos os meses futuros?')) return;
-    data.recurrings = (data.recurrings||[]).filter(r=>r.id!==recurringId);
+    if(!confirm('Excluir esta recorrência? Ela será removida de todos os meses, incluindo os lançamentos já registrados dela.')) return;
+    removeRecurringEverywhere(recurringId);
     showToast('Recorrência excluída!');
   } else {
     if(!confirm('Excluir este lançamento?')) return;
