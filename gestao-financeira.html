@@ -1591,10 +1591,7 @@ function renderDashboard(){
   const upcomingN=pendAccs.filter(a=>a.dueDate>=today&&a.dueDate<=addDays(today,7)).length;
 
   setMonthLabel('dash-month-lbl', cm);
-  document.getElementById('sidebar-balance').textContent=fmt(
-    txAll.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0)-
-    txAll.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0)
-  );
+  document.getElementById('sidebar-balance').textContent=fmt(bal);
   document.getElementById('dash-chart-label').textContent=monthFull(cm);
 
   const pct=(a,b)=>b?Math.abs(Math.round((a-b)/b*100)):0;
@@ -2580,11 +2577,8 @@ function deleteTx(id){
 }
 
 function updateSidebarBalance(){
-  const lastDay = currentMonthStr() + '-31';
-  const bal = getAllEffectiveTx()
-    .filter(t => t.date <= lastDay)
-    .reduce((s,t) => s + (t.type==='income' ? t.amount : -t.amount), 0);
-  document.getElementById('sidebar-balance').textContent = fmt(bal);
+  // Segue o mês-âncora selecionado e projeta recorrências/lançamentos futuros.
+  document.getElementById('sidebar-balance').textContent = fmt(balanceThroughMonth(anchorMonth));
 }
 
 // ═══════════════════════════════════════
