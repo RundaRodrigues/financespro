@@ -1500,10 +1500,11 @@ async function loadFromDrive() {
   }
 }
 
-async function saveToDrive() {
+async function saveToDrive({ notify = false } = {}) {
   if (!accessToken) {
     cacheDataSnapshot();
     setSyncStatus('offline', 'Salvo localmente');
+    if (notify) showToast('Salvo localmente. Reconecte para sincronizar.');
     return;
   }
   try {
@@ -1516,6 +1517,7 @@ async function saveToDrive() {
     }
     cacheDataSnapshot();
     setSyncStatus('synced', 'Salvo agora');
+    if (notify) showToast('Sincronizado!', 'success');
   } catch(e) {
     setSyncStatus('error', 'Falha ao salvar');
     showToast('Erro ao salvar no Drive: ' + e.message, 'error');
@@ -1525,7 +1527,7 @@ async function saveToDrive() {
 function scheduleSave() {
   clearTimeout(saveTimer);
   setSyncStatus('syncing', 'Aguardando...');
-  saveTimer = setTimeout(saveToDrive, 2000);
+  saveTimer = setTimeout(() => saveToDrive({ notify: true }), 2000);
 }
 
 async function syncNow() {
