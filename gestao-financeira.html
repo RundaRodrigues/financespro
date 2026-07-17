@@ -689,7 +689,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
       <i class="fas fa-chart-bar"></i> Relatórios
     </div>
   </nav>
-  <div id="sync-status-bar" class="sync-status" onclick="syncNow()" title="Clique para sincronizar">
+  <div id="sync-status-bar" class="sync-status" onclick="syncOrSignIn()" title="Clique para sincronizar">
     <div class="sync-dot" id="sync-dot"></div>
     <span id="sync-label">Não sincronizado</span>
   </div>
@@ -1219,10 +1219,17 @@ function showLoginScreen() {
 // Token is stored in localStorage so it survives F5, tab close, and browser restarts.
 // It's scoped to this origin and carries an expiry timestamp — cleared on sign-out.
 const SESSION_KEY = 'gf_token_v2';
+const SESSION_HINT_KEY = 'gf_session_hint_v1';
+const LEGACY_TOKEN_HINT_KEY = 'gf_token_hint';
+const DATA_CACHE_KEY = 'gf_cached_data_v1';
+const SESSION_REMEMBER_MS = 7 * 24 * 60 * 60 * 1000;
 
 function saveSession(token, expiresIn) {
   const expiresAt = Date.now() + (expiresIn - 60) * 1000; // 60s safety buffer
-  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt })); } catch(_) {}
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }));
+    rememberSession();
+  } catch(_) {}
 }
 
 function loadSession() {
@@ -1233,8 +1240,48 @@ function loadSession() {
   return null;
 }
 
+function rememberSession() {
+  const rememberUntil = Date.now() + SESSION_REMEMBER_MS;
+  try {
+    localStorage.setItem(SESSION_HINT_KEY, JSON.stringify({ rememberUntil }));
+    localStorage.setItem(LEGACY_TOKEN_HINT_KEY, 'has_token');
+  } catch(_) {}
+}
+
+function hasRememberedSession() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_HINT_KEY) || 'null');
+    if (s && Date.now() < s.rememberUntil) return true;
+  } catch(_) {}
+  return localStorage.getItem(LEGACY_TOKEN_HINT_KEY) === 'has_token';
+}
+
 function clearSession() {
   localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_HINT_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_HINT_KEY);
+}
+
+function cacheDataSnapshot() {
+  try {
+    localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
+      data,
+      cachedAt: Date.now(),
+      expiresAt: Date.now() + SESSION_REMEMBER_MS
+    }));
+  } catch(_) {}
+}
+
+function loadCachedDataSnapshot() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || 'null');
+    if (cached && cached.data && Date.now() < cached.expiresAt) return cached.data;
+  } catch(_) {}
+  return null;
+}
+
+function clearCachedDataSnapshot() {
+  localStorage.removeItem(DATA_CACHE_KEY);
 }
 
 let _refreshTimer = null;
@@ -1267,6 +1314,9 @@ function silentRefresh() {
 function signIn() {
   const clientId = getClientId();
   if (!clientId) return resetSetup();
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    return showToast('Google ainda está carregando. Tente novamente em alguns segundos.', 'error');
+  }
 
   const tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: clientId,
@@ -1276,7 +1326,6 @@ function signIn() {
       accessToken = resp.access_token;
       saveSession(accessToken, resp.expires_in || 3600);
       scheduleTokenRefresh(resp.expires_in || 3600);
-      localStorage.setItem('gf_token_hint', 'has_token');
       showApp();
       await loadFromDrive();
     },
@@ -1291,7 +1340,7 @@ function signOut() {
   driveFileId = null;
   data = { transactions:[], budgets:[], accounts:[] };
   clearSession();
-  localStorage.removeItem('gf_token_hint');
+  clearCachedDataSnapshot();
   document.getElementById('app').style.display = 'none';
   showLoginScreen();
 }
@@ -1385,7 +1434,6 @@ async function driveRequest(url, options = {}, _retry = false) {
     if (resp.status === 401 && !_retry) {
       // Token rejected — clear stored session and ask user to log in again
       clearSession();
-      localStorage.removeItem('gf_token_hint');
       accessToken = null;
       showToast('Sessão expirada. Faça login novamente.', 'error');
       showLoginScreen();
@@ -1437,10 +1485,12 @@ async function loadFromDrive() {
         refreshCurrentSection();
         updateSidebarBalance();
         updateAccountsBadge();
+        cacheDataSnapshot();
       }
       setSyncStatus('synced', 'Sincronizado');
       showToast('Dados carregados do Google Drive!', 'success');
     } else {
+      cacheDataSnapshot();
       setSyncStatus('synced', 'Pronto para salvar');
       showToast('Nenhum dado encontrado. Comece adicionando lançamentos!');
     }
@@ -1451,7 +1501,11 @@ async function loadFromDrive() {
 }
 
 async function saveToDrive() {
-  if (!accessToken) return;
+  if (!accessToken) {
+    cacheDataSnapshot();
+    setSyncStatus('offline', 'Salvo localmente');
+    return;
+  }
   try {
     setSyncStatus('syncing', 'Salvando...');
     const content = JSON.stringify({ ...data, lastModified: new Date().toISOString(), version: 1 });
@@ -1460,6 +1514,7 @@ async function saveToDrive() {
     } else {
       driveFileId = await createDriveFile(content);
     }
+    cacheDataSnapshot();
     setSyncStatus('synced', 'Salvo agora');
   } catch(e) {
     setSyncStatus('error', 'Falha ao salvar');
@@ -1475,8 +1530,18 @@ function scheduleSave() {
 
 async function syncNow() {
   clearTimeout(saveTimer);
+  if (!accessToken) {
+    await saveToDrive();
+    showToast('Dados salvos localmente. Reconecte o Google Drive para sincronizar.');
+    return;
+  }
   await saveToDrive();
   showToast('Sincronizado!', 'success');
+}
+
+function syncOrSignIn() {
+  if (!accessToken) return signIn();
+  syncNow();
 }
 
 // ═══════════════════════════════════════
@@ -2874,6 +2939,15 @@ function nextMonthStr(ym){
       const remainingSec = Math.max(Math.floor((s.expiresAt - Date.now()) / 1000) + 60, 30);
       scheduleTokenRefresh(remainingSec);
     } catch(_){}
+    return;
+  }
+  const cachedData = hasRememberedSession() ? loadCachedDataSnapshot() : null;
+  if(cachedData){
+    data = { transactions:[], budgets:[], accounts:[], recurrings:[], paidVirtuals:{}, ...cachedData };
+    showApp();
+    setSyncStatus('offline', 'Offline - reconectar');
+    setTimeout(hideSplash, 700);
+    showToast('Sessão lembrada. Clique no status para reconectar o Google Drive.');
     return;
   }
   // No valid token — show login
