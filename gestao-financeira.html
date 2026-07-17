@@ -609,7 +609,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
       </div>
       <div class="step">
         <div class="step-num">3</div>
-        <div>Vá em <strong>Credenciais → Criar credencial → ID do cliente OAuth</strong>. Tipo: <strong>Aplicativo da Web</strong>. Em "Origens JavaScript autorizadas" adicione <code>http://localhost:8080</code>.</div>
+        <div>Vá em <strong>Credenciais → Criar credencial → ID do cliente OAuth</strong>. Tipo: <strong>Aplicativo da Web</strong>. Em "Origens JavaScript autorizadas" adicione <code id="setup-origin"></code>.</div>
       </div>
       <div class="step">
         <div class="step-num">4</div>
@@ -2843,6 +2843,8 @@ function nextMonthStr(ym){
   if(localStorage.getItem('gf_dark')!=='0'){
     document.body.classList.add('dark');
   }
+  const setupOrigin = document.getElementById('setup-origin');
+  if(setupOrigin) setupOrigin.textContent = window.location.origin;
   selectTxType('income');
 
   // Hide splash screen after a short delay (gives app time to init)
