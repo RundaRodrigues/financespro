@@ -450,15 +450,26 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   label{font-size:14px}
 
   /* ── Tables: hide less important columns, better rows ── */
+  .table-wrap{overflow-x:hidden;max-width:100%}
+  .table-wrap table{table-layout:fixed;width:100%;max-width:100%}
+  .table-wrap th,.table-wrap td{overflow-wrap:anywhere;word-break:break-word}
+  .table-wrap td:last-child,.table-wrap th:last-child{width:78px;padding-left:4px;padding-right:0}
+  .table-wrap td:last-child>div{gap:3px!important;justify-content:flex-end}
+  .table-wrap .btn-icon{width:30px;height:30px;padding:0;justify-content:center;flex:0 0 30px}
+  .table-wrap .badge{white-space:normal}
   /* Transactions table */
   #tx-table th:nth-child(3),#tx-table td:nth-child(3),
   #tx-table th:nth-child(4),#tx-table td:nth-child(4){display:none}
   /* Income table */
+  #income-table th:nth-child(2),#income-table td:nth-child(2),
   #income-table th:nth-child(3),#income-table td:nth-child(3),
   #income-table th:nth-child(4),#income-table td:nth-child(4){display:none}
+  #income-table td:last-child,#income-table th:last-child{width:66px}
   /* Expenses table */
+  #expenses-table th:nth-child(2),#expenses-table td:nth-child(2),
   #expenses-table th:nth-child(3),#expenses-table td:nth-child(3),
   #expenses-table th:nth-child(4),#expenses-table td:nth-child(4){display:none}
+  #expenses-table td:last-child,#expenses-table th:last-child{width:98px}
   /* Recent transactions (dashboard) */
   #recent-tx th:nth-child(2),#recent-tx td:nth-child(2){display:none}
   /* Better row height for touch targets */
