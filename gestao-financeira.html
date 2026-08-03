@@ -470,6 +470,50 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   #expenses-table th:nth-child(3),#expenses-table td:nth-child(3),
   #expenses-table th:nth-child(4),#expenses-table td:nth-child(4){display:none}
   #expenses-table td:last-child,#expenses-table th:last-child{width:98px}
+  #section-expenses .table-wrap thead{display:none}
+  #section-expenses .table-wrap table,
+  #section-expenses .table-wrap tbody{display:block;width:100%}
+  #expenses-table tr{display:block;width:100%}
+  #expenses-table tr:not(.cat-group-hdr){
+    position:relative;
+    padding:12px 0;
+    border-bottom:1px solid var(--border);
+  }
+  #expenses-table tr:not(.cat-group-hdr):last-child{border-bottom:none}
+  #expenses-table tr:not(.cat-group-hdr) td{
+    display:block;
+    border-bottom:none;
+    padding:2px 0;
+  }
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(2),
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(3),
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(4){
+    display:none;
+  }
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(1){
+    padding-right:44%;
+    min-height:38px;
+  }
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(5){
+    position:absolute;
+    top:12px;
+    right:0;
+    width:42%;
+    text-align:right;
+    font-size:15px;
+  }
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(6){
+    width:auto;
+    padding-top:8px;
+  }
+  #expenses-table tr:not(.cat-group-hdr) td:nth-child(6)>div{
+    justify-content:flex-start!important;
+  }
+  #expenses-table .cat-group-hdr td{
+    display:block;
+    width:100%;
+    padding:12px 0;
+  }
   /* Recent transactions (dashboard) */
   #recent-tx th:nth-child(2),#recent-tx td:nth-child(2){display:none}
   /* Better row height for touch targets */
