@@ -1775,7 +1775,11 @@ function currentMonthStr() { return todayStr().substr(0,7); }
 function uid()        { return Date.now().toString(36)+Math.random().toString(36).substr(2); }
 function addDays(d,n) { const dt=new Date(d); dt.setDate(dt.getDate()+n); return dt.toISOString().split('T')[0]; }
 function prevMonth(ym){ const[y,m]=ym.split('-').map(Number); const dt=new Date(y,m-2,1); return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`; }
-function lastNMonths(n){ const ms=[]; const d=new Date(); for(let i=n-1;i>=0;i--){const dt=new Date(d.getFullYear(),d.getMonth()-i,1);ms.push(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`);} return ms; }
+function addMonthsStr(ym, delta){ const[y,m]=ym.split('-').map(Number); const dt=new Date(y,m-1+delta,1); return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`; }
+function lastNMonths(n, centerMonth=anchorMonth){ const ms=[]; for(let i=n-1;i>=0;i--) ms.push(addMonthsStr(centerMonth,-i)); return ms; }
+function monthsFromTo(startMonth,endMonth){ const ms=[]; let m=startMonth; while(m<=endMonth){ ms.push(m); m=addMonthsStr(m,1); } return ms; }
+function projectedTxForMonths(months){ return months.flatMap(m=>getTxForMonthProjected(m)); }
+function projectedTxWindow(centerMonth=anchorMonth,past=12,future=12){ return projectedTxForMonths(monthsFromTo(addMonthsStr(centerMonth,-past),addMonthsStr(centerMonth,future))); }
 
 // ═══════════════════════════════════════
 //  CHARTS
@@ -1795,8 +1799,8 @@ function makeDonut(id, txList){
 function makeBar(id, months){
   destroyChart(id);
   const ctx=document.getElementById(id); if(!ctx)return;
-  const inc=months.map(m=>getEffectiveTxForMonth(m).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0));
-  const exp=months.map(m=>getEffectiveTxForMonth(m).filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0));
+  const inc=months.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0));
+  const exp=months.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0));
   charts[id]=new Chart(ctx,{type:'bar',data:{labels:months.map(monthLbl),datasets:[{label:'Receitas',data:inc,backgroundColor:'#10b981',borderRadius:6},{label:'Despesas',data:exp,backgroundColor:'#ef4444',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.raw)}`}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$ '+v.toLocaleString('pt-BR')}}}}});
 }
 
@@ -1822,14 +1826,14 @@ function changeDashMonth(d){
 
 function renderDashboard(){
   const today=todayStr(), cm=anchorMonth;
-  const txAll=getAllEffectiveTx(), accs=data.accounts;
-  const mTx=getEffectiveTxForMonth(cm);
+  const accs=data.accounts;
+  const mTx=getTxForMonthProjected(cm);
   const incM=mTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const expM=mTx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   // Saldo acumulado até o fim do mês selecionado (projeta recorrências futuras).
   const bal=balanceThroughMonth(cm);
   const pm=prevMonth(cm);
-  const pmTx=txAll.filter(t=>t.date.startsWith(pm));
+  const pmTx=getTxForMonthProjected(pm);
   const pmInc=pmTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const pmExp=pmTx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   const pendAccs=accs.filter(a=>a.status==='pending');
@@ -1944,7 +1948,7 @@ function renderDashboard(){
 //  TRANSACTIONS
 // ═══════════════════════════════════════
 function renderTx(){
-  const txAll=getAllEffectiveTx();
+  const txAll=projectedTxWindow(anchorMonth,12,12);
   const search=document.getElementById('tx-search').value.toLowerCase();
   const type=document.getElementById('tx-filter-type').value;
   const cat=document.getElementById('tx-filter-cat').value;
@@ -1999,17 +2003,18 @@ function renderTypeScreen(type) {
   const isIncome = type === 'income';
   const month    = anchorMonth;
   const prefix   = isIncome ? 'income' : 'expenses';
-  const mTx      = getEffectiveTxForMonth(month).filter(t => t.type === type);
-  const allType  = getAllEffectiveTx().filter(t => t.type === type);
+  const mTx      = getTxForMonthProjected(month).filter(t => t.type === type);
+  const allType  = projectedTxWindow(month,12,12).filter(t => t.type === type);
   const pm       = prevMonth(month);
-  const pmTotal  = getEffectiveTxForMonth(pm).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
+  const pmTotal  = getTxForMonthProjected(pm).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
   const mTotal   = mTx.reduce((s,t) => s+t.amount, 0);
   const ytdKey   = month.substr(0,4);
-  const ytdTotal = allType.filter(t => t.date.startsWith(ytdKey)).reduce((s,t) => s+t.amount, 0);
+  const ytdTotal = projectedTxForMonths(monthsFromTo(`${ytdKey}-01`, month))
+    .filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
 
   // Média mensal (últimos 6 meses)
   const last6 = lastNMonths(6);
-  const avg   = last6.map(m => allType.filter(t => t.date.startsWith(m)).reduce((s,t) => s+t.amount, 0));
+  const avg   = last6.map(m => getTxForMonthProjected(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
   const avgM  = avg.reduce((s,v) => s+v, 0) / 6;
 
   // Maior categoria
@@ -2100,7 +2105,7 @@ function renderTypeScreen(type) {
   // Barras — evolução mensal
   destroyChart(`chart-${prefix}-monthly`);
   const months6 = lastNMonths(6);
-  const monthlyData = months6.map(m => allType.filter(t => t.date.startsWith(m)).reduce((s,t) => s+t.amount, 0));
+  const monthlyData = months6.map(m => getTxForMonthProjected(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
   const ctx2 = document.getElementById(`chart-${prefix}-monthly`);
   if (ctx2) charts[`chart-${prefix}-monthly`] = new Chart(ctx2, {
     type: 'bar',
@@ -2525,8 +2530,9 @@ function changeBudgetMonth(d){
 function renderBudget(){
   setMonthLabel('budget-month-lbl', anchorMonth);
   const buds=data.budgets.filter(b=>b.month===anchorMonth);
-  const txM=getEffectiveTxForMonth(anchorMonth).filter(t=>t.type==='expense');
-  const incM=getEffectiveTxForMonth(anchorMonth).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const monthTx=getTxForMonthProjected(anchorMonth);
+  const txM=monthTx.filter(t=>t.type==='expense');
+  const incM=monthTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const totalBud=buds.reduce((s,b)=>s+b.limit,0);
   const totalSpent=txM.reduce((s,t)=>s+t.amount,0);
 
@@ -2631,7 +2637,7 @@ function updateAccountsBadge(){
 // ═══════════════════════════════════════
 function renderReports(){
   const months=lastNMonths(parseInt(document.getElementById('report-period').value));
-  const f=getAllEffectiveTx().filter(t=>months.some(m=>t.date.startsWith(m)));
+  const f=projectedTxForMonths(months);
   const inc=f.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const exp=f.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   const byCat={};
@@ -2651,12 +2657,7 @@ function renderReports(){
   // Line: balance evolution
   destroyChart('chart-rep-line');
   const ctx=document.getElementById('chart-rep-line'); if(!ctx)return;
-  const sorted=[...data.transactions].sort((a,b)=>a.date.localeCompare(b.date));
-  let bal=sorted.filter(t=>t.date<months[0]+'-01').reduce((s,t)=>s+(t.type==='income'?t.amount:-t.amount),0);
-  const balData=months.map(m=>{
-    sorted.filter(t=>t.date.startsWith(m)).forEach(t=>{ bal+=t.type==='income'?t.amount:-t.amount; });
-    return bal;
-  });
+  const balData=months.map(m=>balanceThroughMonth(m));
   charts['chart-rep-line']=new Chart(ctx,{type:'line',data:{labels:months.map(monthLbl),datasets:[{label:'Saldo',data:balData,borderColor:'#6366f1',backgroundColor:'rgba(99,102,241,.1)',fill:true,tension:.4,pointBackgroundColor:'#6366f1',pointRadius:5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:c=>` Saldo: ${fmt(c.raw)}`}}},scales:{y:{ticks:{callback:v=>'R$ '+v.toLocaleString('pt-BR')}}}}});
 }
 
@@ -2894,7 +2895,7 @@ function changeInvestmentMonth(d){
 }
 
 function getMonthInvestmentBase(month){
-  const txM=getEffectiveTxForMonth(month);
+  const txM=getTxForMonthProjected(month);
   const income=txM.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const expenses=txM.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   const surplus=income-expenses;
