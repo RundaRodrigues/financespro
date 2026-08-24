@@ -261,6 +261,19 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 .budget-item:last-child{margin-bottom:0}
 .budget-meta{display:flex;justify-content:space-between;margin-bottom:8px;font-size:14px}
 
+/* ── Investments ── */
+.investment-row{display:flex;align-items:flex-start;gap:14px;padding:16px 0;border-bottom:1px solid var(--border)}
+.investment-row:last-child{border-bottom:none}
+.investment-icon{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+.investment-info{flex:1;min-width:0}
+.investment-name{font-weight:600;font-size:14px}
+.investment-meta{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+.investment-actions{display:flex;gap:4px;justify-content:flex-end;margin-top:8px}
+.investment-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.investment-summary-card{padding:16px;border-radius:10px;background:var(--bg)}
+.investment-summary-card .lbl{font-size:12px;color:var(--muted);margin-bottom:6px}
+.investment-summary-card .amt{font-size:22px;font-weight:700}
+
 /* ── Accounts ── */
 .account-row{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--border)}
 .account-row:last-child{border-bottom:none}
@@ -547,6 +560,8 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
     padding:8px 6px!important;
     box-sizing:border-box;
   }
+  .investment-summary{grid-template-columns:1fr}
+  .investment-row{align-items:flex-start}
 
   /* ── Section header rows ── */
   .flex.items-center.justify-between{flex-wrap:wrap;gap:10px}
@@ -731,6 +746,9 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
     <div class="nav-section">Controle</div>
     <div class="nav-item" data-section="budget" onclick="navigate('budget')">
       <i class="fas fa-piggy-bank"></i> Orçamento
+    </div>
+    <div class="nav-item" data-section="investments" onclick="navigate('investments')">
+      <i class="fas fa-seedling"></i> Investimentos
     </div>
     <div class="nav-item" data-section="accounts" onclick="navigate('accounts')">
       <i class="fas fa-file-invoice-dollar"></i> Contas
@@ -977,6 +995,36 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
       </div>
     </section>
 
+    <!-- ── INVESTMENTS ── -->
+    <section class="section" id="section-investments">
+      <div class="flex items-center justify-between mb-6">
+        <div class="month-nav">
+          <button onclick="changeInvestmentMonth(-1)"><i class="fas fa-chevron-left" style="font-size:11px"></i></button>
+          <span id="invest-month-lbl"></span>
+          <button onclick="changeInvestmentMonth(1)"><i class="fas fa-chevron-right" style="font-size:11px"></i></button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="anchorMonth=currentMonthStr();renderInvestments()"><i class="fas fa-calendar-check"></i> Mês atual</button>
+          <button class="btn btn-primary btn-sm" onclick="openInvestmentModal()"><i class="fas fa-plus"></i> Nova Meta</button>
+        </div>
+      </div>
+      <div id="investment-alerts"></div>
+      <div class="stats-grid" id="investment-stats"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Metas de Investimento</div><div class="card-sub">Percentual calculado sobre a sobra do mês</div></div>
+          </div>
+          <div id="investment-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Resumo da Alocação</div></div>
+          <div id="investment-summary"></div>
+          <div class="chart-wrap" style="height:200px;margin-top:16px"><canvas id="chart-investments"></canvas></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ── ACCOUNTS ── -->
     <section class="section" id="section-accounts">
       <div class="filter-bar">
@@ -1174,6 +1222,39 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   </div>
 </div>
 
+<!-- Investment -->
+<div class="modal-overlay" id="modal-investment">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-invest-title">Nova Meta de Investimento</h2>
+      <button class="modal-close" onclick="closeModal('modal-investment')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="inv-id">
+      <div class="form-grid">
+        <div class="form-group full"><label>Nome da meta</label><input type="text" id="inv-name" placeholder="Ex: Fundo de emergência"></div>
+        <div class="form-group"><label>Tipo</label>
+          <select id="inv-type">
+            <option value="emergency">Fundo de emergência</option>
+            <option value="fixed_income">Renda fixa</option>
+            <option value="variable_income">Renda variável</option>
+            <option value="retirement">Aposentadoria</option>
+            <option value="other">Outros investimentos</option>
+          </select>
+        </div>
+        <div class="form-group"><label>% da sobra</label><input type="number" id="inv-pct" placeholder="Ex: 50" min="0" max="100" step="0.01"></div>
+        <div class="form-group"><label>Teto mensal (R$)</label><input type="number" id="inv-cap" placeholder="0,00 = sem teto" min="0" step="0.01"></div>
+        <div class="form-group"><label>Investido no mês (R$)</label><input type="number" id="inv-actual" placeholder="0,00" min="0" step="0.01"></div>
+        <div class="form-group full"><label>Observação (opcional)</label><textarea id="inv-notes" placeholder="Ex: manter em liquidez diária até completar 6 meses de despesas"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-investment')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveInvestment()">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Account -->
 <div class="modal-overlay" id="modal-account">
   <div class="modal">
@@ -1222,14 +1303,21 @@ const CAT_COLORS   = {
   'Educação':'#3b82f6','Lazer':'#8b5cf6','Vestuário':'#ec4899','Contas':'#06b6d4',
   'Assinaturas':'#84cc16','Pets':'#a855f7','Beleza':'#f43f5e','Eletrônicos':'#14b8a6','Outros':'#94a3b8',
 };
-const SECTION_TITLES = {dashboard:'Dashboard',transactions:'Lançamentos',income:'Entradas',expenses:'Despesas',recurrings:'Recorrências',projections:'Projeções',budget:'Orçamento',accounts:'Contas a Pagar/Receber',reports:'Relatórios'};
+const INVESTMENT_TYPES = {
+  emergency:{label:'Fundo de emergência', icon:'fa-shield-alt', color:'ic-blue'},
+  fixed_income:{label:'Renda fixa', icon:'fa-landmark', color:'ic-green'},
+  variable_income:{label:'Renda variável', icon:'fa-chart-line', color:'ic-purple'},
+  retirement:{label:'Aposentadoria', icon:'fa-umbrella-beach', color:'ic-yellow'},
+  other:{label:'Outros investimentos', icon:'fa-seedling', color:'ic-green'}
+};
+const SECTION_TITLES = {dashboard:'Dashboard',transactions:'Lançamentos',income:'Entradas',expenses:'Despesas',recurrings:'Recorrências',projections:'Projeções',budget:'Orçamento',investments:'Investimentos',accounts:'Contas a Pagar/Receber',reports:'Relatórios'};
 const DRIVE_FILE_NAME = 'financas-pro-data.json';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
 // ═══════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════
-let data = { transactions:[], budgets:[], accounts:[], recurrings:[], paidVirtuals:{} };
+let data = { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{} };
 let accessToken = null;
 let driveFileId  = null;
 let currentSection = 'dashboard';
@@ -1240,6 +1328,7 @@ let anchorMonth   = currentMonthStr();
 let projYear      = new Date().getFullYear();
 let editingTxId  = null;
 let editingBudId = null;
+let editingInvId = null;
 let salaryCycleOffset = localStorage.getItem('gf_salary_cycle')!=='0';
 let editingAccId = null;
 let saveTimer = null;
@@ -1339,6 +1428,10 @@ function clearCachedDataSnapshot() {
   localStorage.removeItem(DATA_CACHE_KEY);
 }
 
+function normalizeDataShape(raw = {}) {
+  return { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, ...raw };
+}
+
 let _refreshTimer = null;
 function scheduleTokenRefresh(expiresIn) {
   clearTimeout(_refreshTimer);
@@ -1393,7 +1486,7 @@ function signOut() {
   if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {});
   accessToken = null;
   driveFileId = null;
-  data = { transactions:[], budgets:[], accounts:[] };
+  data = normalizeDataShape();
   clearSession();
   clearCachedDataSnapshot();
   document.getElementById('app').style.display = 'none';
@@ -1536,7 +1629,7 @@ async function loadFromDrive() {
     if (driveFileId) {
       const loaded = await readDriveFile(driveFileId);
       if (loaded && loaded.transactions) {
-        data = { recurrings:[], paidVirtuals:{}, ...loaded };
+        data = normalizeDataShape(loaded);
         refreshCurrentSection();
         updateSidebarBalance();
         updateAccountsBadge();
@@ -1625,6 +1718,7 @@ function navigate(section) {
   if (section === 'recurrings')   renderRecurrings();
   if (section === 'projections')  { projYear = +anchorMonth.split('-')[0]; renderProjections(); }
   if (section === 'budget')       renderBudget();
+  if (section === 'investments')  renderInvestments();
   if (section === 'accounts')     renderAccounts();
   if (section === 'reports')      renderReports();
 }
@@ -2760,6 +2854,177 @@ function deleteBud(id){
 }
 
 // ═══════════════════════════════════════
+//  INVESTMENTS
+// ═══════════════════════════════════════
+function changeInvestmentMonth(d){
+  const [y,m]=anchorMonth.split('-').map(Number);
+  const dt=new Date(y,m-1+d,1);
+  anchorMonth=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+  renderInvestments();
+}
+
+function getMonthInvestmentBase(month){
+  const txM=getEffectiveTxForMonth(month);
+  const income=txM.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const expenses=txM.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const surplus=income-expenses;
+  return { income, expenses, surplus };
+}
+
+function getInvestmentPlanAmount(inv, surplus){
+  if(surplus<=0) return 0;
+  const byPct = surplus * ((inv.percent||0)/100);
+  const cap = inv.monthlyCap||0;
+  return cap>0 ? Math.min(byPct, cap) : byPct;
+}
+
+function renderInvestments(){
+  if(!data.investments) data.investments=[];
+  setMonthLabel('invest-month-lbl', anchorMonth);
+  const month=anchorMonth;
+  const invs=data.investments.filter(i=>i.month===month);
+  const base=getMonthInvestmentBase(month);
+  const planned=invs.reduce((s,i)=>s+getInvestmentPlanAmount(i, base.surplus),0);
+  const actual=invs.reduce((s,i)=>s+(i.actualAmount||0),0);
+  const pctTotal=invs.reduce((s,i)=>s+(i.percent||0),0);
+  const remaining=Math.max(base.surplus-planned,0);
+  const progress=planned>0 ? Math.min(actual/planned*100,100) : 0;
+
+  document.getElementById('investment-stats').innerHTML=`
+    <div class="stat-card"><div class="stat-icon ic-green"><i class="fas fa-arrow-up"></i></div><div class="stat-label">Receitas do mês</div><div class="stat-value text-success">${fmt(base.income)}</div></div>
+    <div class="stat-card"><div class="stat-icon ic-red"><i class="fas fa-arrow-down"></i></div><div class="stat-label">Despesas do mês</div><div class="stat-value text-danger">${fmt(base.expenses)}</div></div>
+    <div class="stat-card"><div class="stat-icon ic-blue"><i class="fas fa-coins"></i></div><div class="stat-label">Sobra disponível</div><div class="stat-value" style="color:${base.surplus>=0?'var(--success)':'var(--danger)'}">${fmt(base.surplus)}</div></div>
+    <div class="stat-card"><div class="stat-icon ic-purple"><i class="fas fa-seedling"></i></div><div class="stat-label">Investimento planejado</div><div class="stat-value">${fmt(planned)}</div><div class="stat-change text-muted">${Math.round(pctTotal)}% da sobra</div></div>
+  `;
+
+  let alerts='';
+  if(base.surplus<=0){
+    alerts+=`<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i><span>Este mês não tem sobra positiva. As metas ficam cadastradas, mas o valor planejado fica em R$ 0,00 até as receitas superarem as despesas.</span></div>`;
+  }
+  if(pctTotal>100){
+    alerts+=`<div class="alert alert-danger"><i class="fas fa-chart-pie"></i><span>As metas somam ${pctTotal.toFixed(2).replace('.',',')}% da sobra. Ajuste para no máximo 100%.</span></div>`;
+  }
+  if(actual>planned && planned>0){
+    alerts+=`<div class="alert alert-warning"><i class="fas fa-info-circle"></i><span>O valor investido no mês passou do planejado em ${fmt(actual-planned)}.</span></div>`;
+  }
+  if(!invs.some(i=>i.type==='emergency')){
+    alerts+=`<div class="alert alert-success"><i class="fas fa-shield-alt"></i><span>Você ainda não criou uma meta de fundo de emergência para este mês.</span></div>`;
+  }
+  document.getElementById('investment-alerts').innerHTML=alerts;
+
+  document.getElementById('investment-list').innerHTML=invs.length?invs.map(inv=>{
+    const meta=INVESTMENT_TYPES[inv.type]||INVESTMENT_TYPES.other;
+    const plan=getInvestmentPlanAmount(inv, base.surplus);
+    const done=inv.actualAmount||0;
+    const pct=plan>0?Math.min(done/plan*100,100):0;
+    const capTxt=inv.monthlyCap>0?` · teto ${fmt(inv.monthlyCap)}`:'';
+    return `<div class="investment-row">
+      <div class="investment-icon ${meta.color}"><i class="fas ${meta.icon}"></i></div>
+      <div class="investment-info">
+        <div class="investment-name">${inv.name}</div>
+        <div class="investment-meta">${meta.label} · ${inv.percent}% da sobra${capTxt}${inv.notes?`<br>${inv.notes}`:''}</div>
+        <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" style="width:${pct}%;background:${done>=plan&&plan>0?'var(--success)':'var(--primary)'}"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:5px">
+          <span class="text-xs text-muted">Planejado: ${fmt(plan)}</span>
+          <span class="text-xs" style="color:${done>=plan?'var(--success)':'var(--muted)'}">Realizado: ${fmt(done)}</span>
+        </div>
+      </div>
+      <div>
+        <div style="text-align:right;font-weight:700;font-size:16px">${fmt(plan)}</div>
+        <div class="investment-actions">
+          <button class="btn btn-outline btn-sm btn-icon" onclick="editInvestment('${inv.id}')" title="Editar"><i class="fas fa-edit"></i></button>
+          <button class="btn btn-outline btn-sm btn-icon" onclick="deleteInvestment('${inv.id}')" style="color:var(--danger)" title="Excluir"><i class="fas fa-trash"></i></button>
+        </div>
+      </div>
+    </div>`;
+  }).join(''):`<div class="empty-state"><i class="fas fa-seedling"></i><p>Nenhuma meta de investimento definida.<br>Crie uma meta para reservar parte da sobra.</p></div>`;
+
+  document.getElementById('investment-summary').innerHTML=`
+    <div class="investment-summary">
+      <div class="investment-summary-card"><div class="lbl">Planejado</div><div class="amt">${fmt(planned)}</div></div>
+      <div class="investment-summary-card"><div class="lbl">Realizado</div><div class="amt" style="color:${actual>=planned&&planned>0?'var(--success)':'var(--text)'}">${fmt(actual)}</div></div>
+      <div class="investment-summary-card"><div class="lbl">Sobra livre</div><div class="amt" style="color:${remaining>0?'var(--success)':'var(--muted)'}">${fmt(remaining)}</div></div>
+    </div>
+    <div style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span class="text-sm text-muted">Progresso do mês</span><span class="text-sm font-bold">${Math.round(progress)}%</span></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${progress}%;background:var(--success)"></div></div>
+    </div>`;
+
+  destroyChart('chart-investments');
+  const ctx=document.getElementById('chart-investments');
+  if(ctx && invs.length){
+    const labels=invs.map(i=>i.name);
+    charts['chart-investments']=new Chart(ctx,{type:'doughnut',data:{labels,datasets:[{data:invs.map(i=>getInvestmentPlanAmount(i,base.surplus)),backgroundColor:['#3b82f6','#10b981','#8b5cf6','#f59e0b','#14b8a6','#ef4444'],borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:12},boxWidth:12,padding:8}},tooltip:{callbacks:{label:c=>` ${c.label}: ${fmt(c.raw)}`}}}}});
+  }
+}
+
+function openInvestmentModal(){
+  editingInvId=null;
+  document.getElementById('modal-invest-title').textContent='Nova Meta de Investimento';
+  document.getElementById('inv-id').value='';
+  document.getElementById('inv-name').value='';
+  document.getElementById('inv-type').value='emergency';
+  document.getElementById('inv-pct').value='';
+  document.getElementById('inv-cap').value='';
+  document.getElementById('inv-actual').value='';
+  document.getElementById('inv-notes').value='';
+  document.getElementById('modal-investment').classList.add('open');
+}
+
+function editInvestment(id){
+  const inv=(data.investments||[]).find(i=>i.id===id); if(!inv)return;
+  editingInvId=id;
+  document.getElementById('modal-invest-title').textContent='Editar Meta de Investimento';
+  document.getElementById('inv-id').value=id;
+  document.getElementById('inv-name').value=inv.name;
+  document.getElementById('inv-type').value=inv.type;
+  document.getElementById('inv-pct').value=inv.percent;
+  document.getElementById('inv-cap').value=inv.monthlyCap||'';
+  document.getElementById('inv-actual').value=inv.actualAmount||'';
+  document.getElementById('inv-notes').value=inv.notes||'';
+  document.getElementById('modal-investment').classList.add('open');
+}
+
+function saveInvestment(){
+  if(!data.investments) data.investments=[];
+  const name=document.getElementById('inv-name').value.trim();
+  const type=document.getElementById('inv-type').value;
+  const percent=parseFloat(document.getElementById('inv-pct').value);
+  const monthlyCap=parseFloat(document.getElementById('inv-cap').value)||0;
+  const actualAmount=parseFloat(document.getElementById('inv-actual').value)||0;
+  const notes=document.getElementById('inv-notes').value.trim();
+  if(!name) return showToast('Informe o nome da meta','error');
+  if(Number.isNaN(percent)||percent<=0||percent>100) return showToast('Informe um percentual entre 0,01% e 100%','error');
+  if(monthlyCap<0) return showToast('Informe um teto mensal válido','error');
+  if(actualAmount<0) return showToast('Informe um valor investido válido','error');
+  const totalPct=data.investments
+    .filter(i=>i.month===anchorMonth&&i.id!==editingInvId)
+    .reduce((s,i)=>s+(i.percent||0),0)+percent;
+  if(totalPct>100) return showToast(`As metas deste mês somariam ${totalPct.toFixed(2).replace('.',',')}%. O máximo é 100%.`,'error');
+
+  const inv={id:editingInvId||uid(),month:anchorMonth,name,type,percent,monthlyCap,actualAmount,notes};
+  if(editingInvId){
+    const idx=data.investments.findIndex(i=>i.id===editingInvId);
+    data.investments[idx]=inv;
+    showToast('Meta atualizada!','success');
+  } else {
+    data.investments.push(inv);
+    showToast('Meta adicionada!','success');
+  }
+  closeModal('modal-investment');
+  scheduleSave();
+  renderInvestments();
+}
+
+function deleteInvestment(id){
+  if(!confirm('Excluir esta meta de investimento?')) return;
+  data.investments=(data.investments||[]).filter(i=>i.id!==id);
+  scheduleSave();
+  showToast('Meta excluída!');
+  renderInvestments();
+}
+
+// ═══════════════════════════════════════
 //  ACCOUNT MODAL
 // ═══════════════════════════════════════
 function openAccountModal(){
@@ -3000,7 +3265,7 @@ function nextMonthStr(ym){
   }
   const cachedData = hasRememberedSession() ? loadCachedDataSnapshot() : null;
   if(cachedData){
-    data = { transactions:[], budgets:[], accounts:[], recurrings:[], paidVirtuals:{}, ...cachedData };
+    data = normalizeDataShape(cachedData);
     showApp();
     setSyncStatus('offline', 'Offline - reconectar');
     setTimeout(hideSplash, 700);
