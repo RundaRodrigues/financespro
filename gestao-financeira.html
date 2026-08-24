@@ -1366,7 +1366,7 @@ const SESSION_KEY = 'gf_token_v2';
 const SESSION_HINT_KEY = 'gf_session_hint_v1';
 const LEGACY_TOKEN_HINT_KEY = 'gf_token_hint';
 const DATA_CACHE_KEY = 'gf_cached_data_v1';
-const SESSION_REMEMBER_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;
 
 function saveSession(token, expiresIn) {
   const expiresAt = Date.now() + (expiresIn - 60) * 1000; // 60s safety buffer
@@ -1406,6 +1406,19 @@ function clearSession() {
   localStorage.removeItem(LEGACY_TOKEN_HINT_KEY);
 }
 
+function clearAccessTokenOnly() {
+  localStorage.removeItem(SESSION_KEY);
+  accessToken = null;
+  driveFileId = null;
+}
+
+function markDriveDisconnected() {
+  clearAccessTokenOnly();
+  rememberSession();
+  cacheDataSnapshot();
+  setSyncStatus('offline', 'Offline - reconectar');
+}
+
 function cacheDataSnapshot() {
   try {
     localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
@@ -1443,23 +1456,31 @@ function scheduleTokenRefresh(expiresIn) {
 function silentRefresh() {
   const clientId = getClientId();
   if (!clientId) return;
-  if (typeof google === 'undefined' || !google.accounts) return;
+  if (typeof google === 'undefined' || !google.accounts) {
+    _refreshTimer = setTimeout(() => silentRefresh(), 30000);
+    return;
+  }
   try {
     const tc = google.accounts.oauth2.initTokenClient({
       client_id: clientId, scope: SCOPES,
       callback: (resp) => {
-        if (resp.error || !resp.access_token) return;
+        if (resp.error || !resp.access_token) {
+          markDriveDisconnected();
+          return;
+        }
         accessToken = resp.access_token;
         saveSession(accessToken, resp.expires_in || 3600);
         scheduleTokenRefresh(resp.expires_in || 3600);
       },
     });
     tc.requestAccessToken({ prompt: 'none' });
-  } catch(_) {}
+  } catch(_) {
+    _refreshTimer = setTimeout(() => silentRefresh(), 30000);
+  }
 }
 // ────────────────────────────────────────
 
-function signIn() {
+function signIn(promptOverride) {
   const clientId = getClientId();
   if (!clientId) return resetSetup();
   if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
@@ -1478,7 +1499,8 @@ function signIn() {
       await loadFromDrive();
     },
   });
-  tokenClient.requestAccessToken({ prompt: 'select_account' });
+  const prompt = promptOverride !== undefined ? promptOverride : (hasRememberedSession() ? '' : 'select_account');
+  tokenClient.requestAccessToken({ prompt });
 }
 
 function signOut() {
@@ -1580,12 +1602,10 @@ async function driveRequest(url, options = {}, _retry = false) {
   });
   if (!resp.ok) {
     if (resp.status === 401 && !_retry) {
-      // Token rejected — clear stored session and ask user to log in again
-      clearSession();
-      accessToken = null;
-      showToast('Sessão expirada. Faça login novamente.', 'error');
-      showLoginScreen();
-      document.getElementById('app').style.display = 'none';
+      markDriveDisconnected();
+      const err = new Error('Sessão do Google expirada. Seus dados continuam salvos neste aparelho; reconecte para sincronizar.');
+      err.sessionExpired = true;
+      throw err;
     }
     throw new Error(`Drive API error ${resp.status}`);
   }
@@ -1643,6 +1663,11 @@ async function loadFromDrive() {
       showToast('Nenhum dado encontrado. Comece adicionando lançamentos!');
     }
   } catch(e) {
+    if (e.sessionExpired) {
+      setSyncStatus('offline', 'Offline - reconectar');
+      showToast(e.message);
+      return;
+    }
     setSyncStatus('error', 'Erro ao sincronizar');
     showToast('Erro ao acessar Google Drive: ' + e.message, 'error');
   }
@@ -1667,6 +1692,12 @@ async function saveToDrive({ notify = false } = {}) {
     setSyncStatus('synced', 'Salvo agora');
     if (notify) showToast('Sincronizado!', 'success');
   } catch(e) {
+    if (e.sessionExpired) {
+      cacheDataSnapshot();
+      setSyncStatus('offline', 'Offline - reconectar');
+      if (notify) showToast(e.message);
+      return;
+    }
     setSyncStatus('error', 'Falha ao salvar');
     showToast('Erro ao salvar no Drive: ' + e.message, 'error');
   }
@@ -1685,8 +1716,7 @@ async function syncNow() {
     showToast('Dados salvos localmente. Reconecte o Google Drive para sincronizar.');
     return;
   }
-  await saveToDrive();
-  showToast('Sincronizado!', 'success');
+  await saveToDrive({ notify: true });
 }
 
 function syncOrSignIn() {
