@@ -1367,6 +1367,7 @@ const SESSION_HINT_KEY = 'gf_session_hint_v1';
 const LEGACY_TOKEN_HINT_KEY = 'gf_token_hint';
 const DATA_CACHE_KEY = 'gf_cached_data_v1';
 const SESSION_REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;
+const DATA_START_MONTH = '2026-09';
 
 function saveSession(token, expiresIn) {
   const expiresAt = Date.now() + (expiresIn - 60) * 1000; // 60s safety buffer
@@ -1441,8 +1442,39 @@ function clearCachedDataSnapshot() {
   localStorage.removeItem(DATA_CACHE_KEY);
 }
 
+function resetPastRecords(raw) {
+  const clean = { ...raw };
+  clean.transactions = (clean.transactions || []).filter(t => (t.date || '').substr(0,7) >= DATA_START_MONTH);
+  clean.budgets = (clean.budgets || []).filter(b => (b.month || '') >= DATA_START_MONTH);
+  clean.accounts = (clean.accounts || []).filter(a => (a.dueDate || '').substr(0,7) >= DATA_START_MONTH);
+  clean.investments = (clean.investments || []).filter(i => (i.month || '') >= DATA_START_MONTH);
+  clean.recurrings = (clean.recurrings || [])
+    .filter(r => !r.endMonth || r.endMonth >= DATA_START_MONTH)
+    .map(r => ({ ...r, startMonth: r.startMonth < DATA_START_MONTH ? DATA_START_MONTH : r.startMonth }));
+  clean.paidVirtuals = Object.fromEntries(
+    Object.entries(clean.paidVirtuals || {}).filter(([id]) => {
+      const m = id.match(/_(\d{4}-\d{2})$/);
+      return !m || m[1] >= DATA_START_MONTH;
+    })
+  );
+  return clean;
+}
+
+function hasPastRecords(raw = {}) {
+  const beforeStart = m => !!m && m < DATA_START_MONTH;
+  return (raw.transactions || []).some(t => beforeStart((t.date || '').substr(0,7))) ||
+    (raw.budgets || []).some(b => beforeStart(b.month)) ||
+    (raw.accounts || []).some(a => beforeStart((a.dueDate || '').substr(0,7))) ||
+    (raw.investments || []).some(i => beforeStart(i.month)) ||
+    (raw.recurrings || []).some(r => beforeStart(r.startMonth) || beforeStart(r.endMonth)) ||
+    Object.keys(raw.paidVirtuals || {}).some(id => {
+      const m = id.match(/_(\d{4}-\d{2})$/);
+      return m && beforeStart(m[1]);
+    });
+}
+
 function normalizeDataShape(raw = {}) {
-  return { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, ...raw };
+  return resetPastRecords({ transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, ...raw });
 }
 
 let _refreshTimer = null;
@@ -1649,11 +1681,14 @@ async function loadFromDrive() {
     if (driveFileId) {
       const loaded = await readDriveFile(driveFileId);
       if (loaded && loaded.transactions) {
-        data = normalizeDataShape(loaded);
+        const normalized = normalizeDataShape(loaded);
+        const hadPastRecords = hasPastRecords(loaded);
+        data = normalized;
         refreshCurrentSection();
         updateSidebarBalance();
         updateAccountsBadge();
         cacheDataSnapshot();
+        if (hadPastRecords) await saveToDrive();
       }
       setSyncStatus('synced', 'Sincronizado');
       showToast('Dados carregados do Google Drive!', 'success');
