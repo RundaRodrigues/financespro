@@ -1297,7 +1297,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 //  CONSTANTS
 // ═══════════════════════════════════════
 const INCOME_CATS  = ['Salário','Freelance','Investimentos','Aluguel Recebido','Presente','Reembolso','Outros'];
-const EXPENSE_CATS = ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Vestuário','Contas','Assinaturas','Pets','Beleza','Eletrônicos','Outros'];
+const EXPENSE_CATS = ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Vestuário','Contas','Cartão de Crédito','Assinaturas','Pets','Beleza','Eletrônicos','Outros'];
 const CAT_COLORS   = {
   'Alimentação':'#ef4444','Moradia':'#f97316','Transporte':'#eab308','Saúde':'#22c55e',
   'Educação':'#3b82f6','Lazer':'#8b5cf6','Vestuário':'#ec4899','Contas':'#06b6d4',
@@ -1366,6 +1366,7 @@ const SESSION_KEY = 'gf_token_v2';
 const SESSION_HINT_KEY = 'gf_session_hint_v1';
 const LEGACY_TOKEN_HINT_KEY = 'gf_token_hint';
 const DATA_CACHE_KEY = 'gf_cached_data_v1';
+const LOCAL_DIRTY_KEY = 'gf_local_dirty_v1';
 const SESSION_REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;
 const DATA_START_MONTH = '2026-09';
 
@@ -1440,6 +1441,18 @@ function loadCachedDataSnapshot() {
 
 function clearCachedDataSnapshot() {
   localStorage.removeItem(DATA_CACHE_KEY);
+}
+
+function markLocalDirty() {
+  try { localStorage.setItem(LOCAL_DIRTY_KEY, '1'); } catch(_) {}
+}
+
+function clearLocalDirty() {
+  localStorage.removeItem(LOCAL_DIRTY_KEY);
+}
+
+function hasLocalDirty() {
+  return localStorage.getItem(LOCAL_DIRTY_KEY) === '1';
 }
 
 function resetPastRecords(raw) {
@@ -1543,6 +1556,7 @@ function signOut() {
   data = normalizeDataShape();
   clearSession();
   clearCachedDataSnapshot();
+  clearLocalDirty();
   document.getElementById('app').style.display = 'none';
   showLoginScreen();
 }
@@ -1599,6 +1613,21 @@ function getAllEffectiveTx() {
   return [...data.transactions, ...virtual];
 }
 
+function getMonthCashFlow(month) {
+  const txM = getTxForMonthProjected(month);
+  const income = txM.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const expenses = txM.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  return { income, expenses, surplus: income - expenses };
+}
+
+function getInvestmentOutflowForMonth(month) {
+  const invs = (data.investments || []).filter(i=>i.month===month);
+  const actual = invs.reduce((s,i)=>s+num(i.actualAmount),0);
+  const base = getMonthCashFlow(month);
+  const planned = invs.reduce((s,i)=>s+getInvestmentPlanAmount(i, base.surplus),0);
+  return actual > 0 ? actual : planned;
+}
+
 // Saldo acumulado até o FIM do mês alvo. Inclui transações reais e recorrências
 // já materializadas até hoje e, para meses futuros, projeta as recorrências dos
 // meses entre o mês real atual e o mês alvo (getAllEffectiveTx só vai até hoje).
@@ -1606,11 +1635,16 @@ function balanceThroughMonth(targetMonth){
   let bal = getAllEffectiveTx()
     .filter(t => t.date <= targetMonth + '-31')
     .reduce((s,t) => s + (t.type==='income' ? t.amount : -t.amount), 0);
+  const investmentMonths = [...new Set((data.investments || [])
+    .filter(i => i.month <= targetMonth && i.month <= currentMonthStr())
+    .map(i => i.month))];
+  investmentMonths.forEach(m => { bal -= getInvestmentOutflowForMonth(m); });
   const curM = currentMonthStr();
   if(targetMonth > curM){
     let m = nextMonthStr(curM);
     while(m <= targetMonth){
       getRecurringVirtualForMonth(m).forEach(t => { bal += t.type==='income' ? t.amount : -t.amount; });
+      bal -= getInvestmentOutflowForMonth(m);
       m = nextMonthStr(m);
     }
   }
@@ -1677,6 +1711,17 @@ async function updateDriveFile(fileId, content) {
 async function loadFromDrive() {
   try {
     setSyncStatus('syncing', 'Carregando...');
+    if (hasLocalDirty()) {
+      await saveToDrive({ notify: false });
+      if (hasLocalDirty()) {
+        setSyncStatus('offline', 'Offline - reconectar');
+        showToast('Não foi possível sincronizar agora. Suas alterações continuam salvas neste aparelho.');
+        return;
+      }
+      setSyncStatus('synced', 'Alterações locais sincronizadas');
+      showToast('Suas alterações locais foram sincronizadas antes de baixar dados do Drive.', 'success');
+      return;
+    }
     driveFileId = await findDriveFile();
     if (driveFileId) {
       const loaded = await readDriveFile(driveFileId);
@@ -1710,6 +1755,7 @@ async function loadFromDrive() {
 
 async function saveToDrive({ notify = false } = {}) {
   if (!accessToken) {
+    markLocalDirty();
     cacheDataSnapshot();
     setSyncStatus('offline', 'Salvo localmente');
     if (notify) showToast('Salvo localmente. Reconecte para sincronizar.');
@@ -1718,21 +1764,25 @@ async function saveToDrive({ notify = false } = {}) {
   try {
     setSyncStatus('syncing', 'Salvando...');
     const content = JSON.stringify({ ...data, lastModified: new Date().toISOString(), version: 1 });
+    if (!driveFileId) driveFileId = await findDriveFile();
     if (driveFileId) {
       await updateDriveFile(driveFileId, content);
     } else {
       driveFileId = await createDriveFile(content);
     }
     cacheDataSnapshot();
+    clearLocalDirty();
     setSyncStatus('synced', 'Salvo agora');
     if (notify) showToast('Sincronizado!', 'success');
   } catch(e) {
     if (e.sessionExpired) {
+      markLocalDirty();
       cacheDataSnapshot();
       setSyncStatus('offline', 'Offline - reconectar');
       if (notify) showToast(e.message);
       return;
     }
+    markLocalDirty();
     setSyncStatus('error', 'Falha ao salvar');
     showToast('Erro ao salvar no Drive: ' + e.message, 'error');
   }
@@ -1740,6 +1790,7 @@ async function saveToDrive({ notify = false } = {}) {
 
 function scheduleSave() {
   clearTimeout(saveTimer);
+  if (!accessToken) markLocalDirty();
   setSyncStatus('syncing', 'Aguardando...');
   saveTimer = setTimeout(() => saveToDrive({ notify: true }), 2000);
 }
@@ -1808,6 +1859,7 @@ function setMonthLabel(elId, ym){
 function todayStr()   { return new Date().toISOString().split('T')[0]; }
 function currentMonthStr() { return todayStr().substr(0,7); }
 function uid()        { return Date.now().toString(36)+Math.random().toString(36).substr(2); }
+function num(v)       { const n = typeof v === 'string' ? parseFloat(v.replace(/\./g,'').replace(',','.')) : Number(v); return Number.isFinite(n) ? n : 0; }
 function addDays(d,n) { const dt=new Date(d); dt.setDate(dt.getDate()+n); return dt.toISOString().split('T')[0]; }
 function prevMonth(ym){ const[y,m]=ym.split('-').map(Number); const dt=new Date(y,m-2,1); return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`; }
 function addMonthsStr(ym, delta){ const[y,m]=ym.split('-').map(Number); const dt=new Date(y,m-1+delta,1); return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`; }
@@ -2412,24 +2464,7 @@ function renderProjections() {
   // Balance accumulated before the selected year
   // Sums actual transactions + all recurring virtual months before Jan of projYear
   function balanceBeforeYear(year) {
-    const prevYearEnd = `${year - 1}-12`;
-    // actual transactions before this year
-    let bal = data.transactions
-      .filter(t => t.date < `${year}-01`)
-      .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
-    // virtual recurring for every active month before this year
-    (data.recurrings || []).forEach(r => {
-      let m = r.startMonth;
-      while (m <= prevYearEnd) {
-        if (!r.endMonth || r.endMonth >= m) {
-          bal += r.type === 'income' ? r.amount : -r.amount;
-        }
-        const [y, mo] = m.split('-').map(Number);
-        const dt = new Date(y, mo, 1);
-        m = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
-      }
-    });
-    return bal;
+    return balanceThroughMonth(addMonthsStr(`${year}-01`, -1));
   }
 
   // Compute per-month income/expense
@@ -2437,10 +2472,11 @@ function renderProjections() {
     const txs  = getTxForMonthProjected(ym);
     const inc  = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
     const exp  = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+    const inv  = getInvestmentOutflowForMonth(ym);
     const isFuture  = ym > cm;
     const isCurrent = ym === cm;
     const isPast    = ym < cm;
-    return { ym, label: MONTH_NAMES[i], inc, exp, bal: inc-exp, isFuture, isCurrent, isPast };
+    return { ym, label: MONTH_NAMES[i], inc, exp, inv, bal: inc-exp-inv, isFuture, isCurrent, isPast };
   });
 
   let accumulated = balanceBeforeYear(projYear);
@@ -2450,9 +2486,11 @@ function renderProjections() {
   const ytdRows  = rows.filter(r => !r.isFuture);
   const ytdInc   = ytdRows.reduce((s,r)=>s+r.inc,0);
   const ytdExp   = ytdRows.reduce((s,r)=>s+r.exp,0);
+  const ytdInv   = ytdRows.reduce((s,r)=>s+r.inv,0);
   const futRows  = rows.filter(r => r.isFuture);
   const projInc  = futRows.reduce((s,r)=>s+r.inc,0);
   const projExp  = futRows.reduce((s,r)=>s+r.exp,0);
+  const projInv  = futRows.reduce((s,r)=>s+r.inv,0);
   const yearEnd  = rows[11].accAfter;
 
   document.getElementById('proj-stats').innerHTML = `
@@ -2479,7 +2517,7 @@ function renderProjections() {
       <div class="stat-icon ic-purple"><i class="fas fa-chart-line"></i></div>
       <div class="stat-label">Projeção Dez/${projYear}</div>
       <div class="stat-value" style="color:${yearEnd>=0?'var(--success)':'var(--danger)'}">${fmt(yearEnd)}</div>
-      <div class="stat-change text-muted">Com recorrências atuais</div>
+      <div class="stat-change text-muted">Com recorrências e investimentos</div>
     </div>
   `;
 
@@ -2502,6 +2540,12 @@ function renderProjections() {
             label: 'Despesas',
             data: rows.map(r=>r.exp),
             backgroundColor: rows.map(r=>r.isFuture?'rgba(239,68,68,.4)':'rgba(239,68,68,.85)'),
+            borderRadius: 6,
+          },
+          {
+            label: 'Investimentos',
+            data: rows.map(r=>r.inv),
+            backgroundColor: rows.map(r=>r.isFuture?'rgba(99,102,241,.35)':'rgba(99,102,241,.8)'),
             borderRadius: 6,
           },
         ]
@@ -2545,7 +2589,7 @@ function renderProjections() {
       <td class="text-right" style="color:${startColor};font-weight:700;background:rgba(99,102,241,.04)">${fmt(r.accBefore)}</td>
       <td class="text-right amt-income">${r.inc>0?'+'+fmt(r.inc):'—'}</td>
       <td class="text-right amt-expense">${r.exp>0?'-'+fmt(r.exp):'—'}</td>
-      <td class="text-right" style="color:${balColor};font-weight:600">${r.inc||r.exp?(r.bal>=0?'+':'')+fmt(r.bal):'—'}</td>
+      <td class="text-right" style="color:${balColor};font-weight:600">${r.inc||r.exp||r.inv?(r.bal>=0?'+':'')+fmt(r.bal):'—'}${r.inv?`<div class="text-xs text-muted">inv. -${fmt(r.inv)}</div>`:''}</td>
       <td class="text-right" style="color:${accColor};font-weight:700">${fmt(r.accAfter)}</td>
       <td>${statusBadge}</td>
     </tr>`;
@@ -2675,6 +2719,7 @@ function renderReports(){
   const f=projectedTxForMonths(months);
   const inc=f.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const exp=f.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const invOut=months.reduce((s,m)=>s+getInvestmentOutflowForMonth(m),0);
   const byCat={};
   f.filter(t=>t.type==='expense').forEach(t=>{ byCat[t.category]=(byCat[t.category]||0)+t.amount; });
   const topCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0];
@@ -2682,7 +2727,7 @@ function renderReports(){
   document.getElementById('report-stats').innerHTML=`
     <div class="stat-card"><div class="stat-icon ic-green"><i class="fas fa-arrow-up"></i></div><div class="stat-label">Total Receitas</div><div class="stat-value text-success">${fmt(inc)}</div></div>
     <div class="stat-card"><div class="stat-icon ic-red"><i class="fas fa-arrow-down"></i></div><div class="stat-label">Total Despesas</div><div class="stat-value text-danger">${fmt(exp)}</div></div>
-    <div class="stat-card"><div class="stat-icon ic-blue"><i class="fas fa-balance-scale"></i></div><div class="stat-label">Saldo do Período</div><div class="stat-value" style="color:${inc-exp>=0?'var(--success)':'var(--danger)'}">${fmt(inc-exp)}</div></div>
+    <div class="stat-card"><div class="stat-icon ic-blue"><i class="fas fa-balance-scale"></i></div><div class="stat-label">Saldo do Período</div><div class="stat-value" style="color:${inc-exp-invOut>=0?'var(--success)':'var(--danger)'}">${fmt(inc-exp-invOut)}</div>${invOut?`<div class="stat-change text-muted"><i class="fas fa-seedling"></i> ${fmt(invOut)} em investimentos</div>`:''}</div>
     <div class="stat-card"><div class="stat-icon ic-purple"><i class="fas fa-chart-pie"></i></div><div class="stat-label">Maior Gasto</div><div class="stat-value" style="font-size:16px">${topCat?topCat[0]:'-'}</div>${topCat?`<div class="stat-change text-danger">${fmt(topCat[1])}</div>`:''}</div>
   `;
 
@@ -2930,11 +2975,7 @@ function changeInvestmentMonth(d){
 }
 
 function getMonthInvestmentBase(month){
-  const txM=getTxForMonthProjected(month);
-  const income=txM.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-  const expenses=txM.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
-  const surplus=income-expenses;
-  return { income, expenses, surplus };
+  return getMonthCashFlow(month);
 }
 
 function getInvestmentPlanAmount(inv, surplus){
@@ -2952,14 +2993,17 @@ function renderInvestments(){
   const base=getMonthInvestmentBase(month);
   const planned=invs.reduce((s,i)=>s+getInvestmentPlanAmount(i, base.surplus),0);
   const actual=invs.reduce((s,i)=>s+(i.actualAmount||0),0);
+  const outflow=getInvestmentOutflowForMonth(month);
+  const balanceAfterInvestment=base.surplus-outflow;
   const pctTotal=invs.reduce((s,i)=>s+(i.percent||0),0);
-  const remaining=Math.max(base.surplus-planned,0);
+  const remaining=Math.max(balanceAfterInvestment,0);
   const progress=planned>0 ? Math.min(actual/planned*100,100) : 0;
+  document.getElementById('sidebar-balance').textContent=fmt(balanceThroughMonth(month));
 
   document.getElementById('investment-stats').innerHTML=`
     <div class="stat-card"><div class="stat-icon ic-green"><i class="fas fa-arrow-up"></i></div><div class="stat-label">Receitas do mês</div><div class="stat-value text-success">${fmt(base.income)}</div></div>
     <div class="stat-card"><div class="stat-icon ic-red"><i class="fas fa-arrow-down"></i></div><div class="stat-label">Despesas do mês</div><div class="stat-value text-danger">${fmt(base.expenses)}</div></div>
-    <div class="stat-card"><div class="stat-icon ic-blue"><i class="fas fa-coins"></i></div><div class="stat-label">Sobra disponível</div><div class="stat-value" style="color:${base.surplus>=0?'var(--success)':'var(--danger)'}">${fmt(base.surplus)}</div></div>
+    <div class="stat-card"><div class="stat-icon ic-blue"><i class="fas fa-coins"></i></div><div class="stat-label">Saldo após investir</div><div class="stat-value" style="color:${balanceAfterInvestment>=0?'var(--success)':'var(--danger)'}">${fmt(balanceAfterInvestment)}</div><div class="stat-change text-muted">${outflow?`-${fmt(outflow)} em investimentos`:'sem investimento lançado'}</div></div>
     <div class="stat-card"><div class="stat-icon ic-purple"><i class="fas fa-seedling"></i></div><div class="stat-label">Investimento planejado</div><div class="stat-value">${fmt(planned)}</div><div class="stat-change text-muted">${Math.round(pctTotal)}% da sobra</div></div>
   `;
 
@@ -3079,6 +3123,7 @@ function saveInvestment(){
   }
   closeModal('modal-investment');
   scheduleSave();
+  updateSidebarBalance();
   renderInvestments();
 }
 
@@ -3086,6 +3131,7 @@ function deleteInvestment(id){
   if(!confirm('Excluir esta meta de investimento?')) return;
   data.investments=(data.investments||[]).filter(i=>i.id!==id);
   scheduleSave();
+  updateSidebarBalance();
   showToast('Meta excluída!');
   renderInvestments();
 }
@@ -3335,7 +3381,7 @@ function nextMonthStr(ym){
     showApp();
     setSyncStatus('offline', 'Offline - reconectar');
     setTimeout(hideSplash, 700);
-    showToast('Sessão lembrada. Clique no status para reconectar o Google Drive.');
+    showToast('Você não está logado. Alterações ficam salvas neste aparelho e serão sincronizadas ao reconectar.');
     return;
   }
   // No valid token — show login
