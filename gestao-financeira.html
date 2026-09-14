@@ -32,6 +32,7 @@
   --shadow-md:0 4px 6px -1px rgba(0,0,0,.1);--radius:12px
 }
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;min-height:100dvh;transition:background .2s,color .2s}
+button,input,select,textarea{touch-action:manipulation}
 
 body.dark{
   --bg:#0f172a;--card:#1e293b;--sidebar:#0a0f1e;--sidebar-hover:#1e293b;
@@ -177,7 +178,9 @@ tr:hover td{background:#f8fafc}
 .badge-warning{background:#fffbeb;color:#92400e}.badge-info{background:#eff6ff;color:#1e40af}
 .badge-neutral{background:#f1f5f9;color:#475569}
 .badge-paid{background:#d1fae5;color:#065f46;font-weight:600}
+.badge-final{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-weight:700}
 body.dark .badge-paid{background:#14532d;color:#bbf7d0}
+body.dark .badge-final{background:#431407;color:#fed7aa;border-color:#9a3412}
 .row-paid td:first-child > div:first-child{text-decoration:line-through;opacity:.6}
 .row-paid{opacity:.75}
 .btn-paid{color:var(--muted)!important;border-color:var(--border)!important}
@@ -351,6 +354,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   /* ── Header ── */
   .hamburger{display:flex}
   .header-title{font-size:18px;font-weight:700}
+  .header-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}
   .header-actions .btn-text{display:none}
   .header-actions .btn{padding:9px 11px}
   .header-actions{gap:6px}
@@ -380,6 +384,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
     transition:color .15s;
     -webkit-tap-highlight-color:transparent;
   }
+  .bottom-nav-item span{max-width:58px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bottom-nav-item i{font-size:20px;transition:transform .15s}
   .bottom-nav-item.active{color:var(--primary)}
   .bottom-nav-item.active i{transform:scale(1.15)}
@@ -452,6 +457,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   .card{padding:16px}
   .card-header{margin-bottom:14px;flex-wrap:wrap;gap:8px}
   .card-title{font-size:15px}
+  .card-sub{font-size:12px}
 
   /* ── Charts ── */
   .chart-wrap{height:185px}
@@ -459,6 +465,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   /* ── Inputs / Forms ── */
   input,select,textarea{font-size:16px!important;padding:13px 14px}
   .form-grid{grid-template-columns:1fr}
+  #recurring-opts>div{grid-template-columns:1fr!important}
   .type-btn{padding:14px}
   label{font-size:14px}
 
@@ -470,6 +477,7 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   .table-wrap td:last-child>div{gap:3px!important;justify-content:flex-end}
   .table-wrap .btn-icon{width:30px;height:30px;padding:0;justify-content:center;flex:0 0 30px}
   .table-wrap .badge{white-space:normal}
+  .table-wrap .date-chip{display:inline-flex}
   /* Transactions table */
   #tx-table th:nth-child(3),#tx-table td:nth-child(3),
   #tx-table th:nth-child(4),#tx-table td:nth-child(4){display:none}
@@ -561,11 +569,14 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
     box-sizing:border-box;
   }
   .investment-summary{grid-template-columns:1fr}
-  .investment-row{align-items:flex-start}
+  .investment-row{align-items:flex-start;gap:10px}
+  .investment-row>div:last-child{min-width:82px}
+  .investment-actions{justify-content:flex-start}
 
   /* ── Section header rows ── */
   .flex.items-center.justify-between{flex-wrap:wrap;gap:10px}
   .flex.items-center.justify-between > div:last-child{display:flex;flex-wrap:wrap;gap:6px}
+  .flex.items-center.justify-between > div:last-child .btn{flex:1;justify-content:center;min-width:126px}
 
   /* ── Month nav ── */
   .month-nav{font-size:14px;padding:7px 12px}
@@ -595,10 +606,12 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   /* ── Filter bar ── */
   .filter-bar{gap:8px}
   .search-wrap{min-width:100%;order:-1}
-  .filter-bar select{flex:1;min-width:0}
+  .filter-bar select,.filter-bar .btn{flex:1;min-width:0}
 
   /* ── Account rows ── */
   .account-row{padding:16px 0}
+  .account-row{align-items:flex-start}
+  .account-row>div:last-child{min-width:96px}
 
   /* ── Buttons ── */
   .btn-sm{padding:9px 14px;font-size:14px}
@@ -621,10 +634,12 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 }
 
 @media(max-width:390px){
-  .stats-grid{gap:8px}
+  .stats-grid{grid-template-columns:1fr;gap:8px}
   .stat-value{font-size:17px}
   .content{padding:12px}
   .card{padding:14px}
+  .header-title{max-width:38vw;font-size:16px}
+  .bottom-nav-item span{font-size:9px;max-width:50px}
 }
 </style>
 </head>
@@ -1586,6 +1601,8 @@ function getRecurringVirtualForMonth(month) {
       date: `${month}-${String(r.dayOfMonth || 1).padStart(2,'0')}`,
       isRecurring: true,
       recurringId: r.id,
+      endMonth: r.endMonth || null,
+      isLastRecurringMonth: !!r.endMonth && r.endMonth === month,
     }));
 }
 
@@ -1891,6 +1908,12 @@ function makeBar(id, months){
   charts[id]=new Chart(ctx,{type:'bar',data:{labels:months.map(monthLbl),datasets:[{label:'Receitas',data:inc,backgroundColor:'#10b981',borderRadius:6},{label:'Despesas',data:exp,backgroundColor:'#ef4444',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.raw)}`}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$ '+v.toLocaleString('pt-BR')}}}}});
 }
 
+function recurringFinalBadge(t){
+  return t && t.type==='expense' && t.isRecurring && t.isLastRecurringMonth
+    ? ' <span class="badge badge-final" title="Último mês desta despesa recorrente"><i class="fas fa-flag-checkered"></i> Última cobrança</span>'
+    : '';
+}
+
 function monthsAround(centerMonth, n){
   const [y,m]=centerMonth.split('-').map(Number);
   const ms=[];
@@ -2024,7 +2047,7 @@ function renderDashboard(){
 
   const recent=[...mTx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
   document.getElementById('recent-tx').innerHTML=recent.length?recent.map(t=>`
-    <tr><td><div style="font-weight:500">${t.description}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
+    <tr><td><div style="font-weight:500">${t.description}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
     <td><span class="badge badge-neutral">${t.category}</span></td>
     <td><span class="date-chip">${fmtDate(t.date)}</span></td>
     <td class="text-right ${t.type==='income'?'amt-income':'amt-expense'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</td></tr>
@@ -2061,7 +2084,7 @@ function renderTx(){
     const paid = isPaid(t);
     return `
     <tr class="${paid?'row-paid':''}">
-      <td><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}</div>${t.payment?`<div class="text-xs text-muted"><i class="fas fa-credit-card" style="font-size:10px"></i> ${t.payment}</div>`:''}</td>
+      <td><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.payment?`<div class="text-xs text-muted"><i class="fas fa-credit-card" style="font-size:10px"></i> ${t.payment}</div>`:''}</td>
       <td><span class="badge badge-neutral">${t.category}</span>${paid?` <span class="badge badge-paid" style="margin-left:4px"><i class="fas fa-check"></i> Pago</span>`:''}</td>
       <td><span class="badge ${t.type==='income'?'badge-success':'badge-danger'}">${t.type==='income'?'Receita':'Despesa'}</span></td>
       <td><span class="date-chip">${fmtDate(t.date)}</span></td>
@@ -2235,7 +2258,7 @@ function renderTypeScreen(type) {
     const rowTpl = (t) => {
       const paid = isPaid(t);
       return `<tr class="${paid?'row-paid':''}">
-        <td style="padding-left:28px"><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
+        <td style="padding-left:28px"><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
         <td>${paid?`<span class="badge badge-paid"><i class="fas fa-check"></i> Pago</span>`:''}</td>
         <td><span class="text-sm text-muted">${t.payment||'—'}</span></td>
         <td><span class="date-chip">${fmtDate(t.date)}</span></td>
@@ -2283,7 +2306,7 @@ function renderTypeScreen(type) {
       const paid = isPaid(t);
       return `
       <tr class="${paid?'row-paid':''}">
-        <td><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
+        <td><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
         <td><span class="badge badge-neutral">${t.category}</span>${paid?` <span class="badge badge-paid" style="margin-left:4px"><i class="fas fa-check"></i> Pago</span>`:''}</td>
         <td><span class="text-sm text-muted">${t.payment||'—'}</span></td>
         <td><span class="date-chip">${fmtDate(t.date)}</span></td>
@@ -2308,6 +2331,7 @@ function renderRecurrings(){
     if(!items.length) return `<div class="empty-state" style="padding:32px"><i class="fas fa-sync-alt"></i><p>Nenhuma recorrência cadastrada.</p></div>`;
     return items.map(r => {
       const active = !r.endMonth || r.endMonth >= today;
+      const finalThisMonth = r.type==='expense' && r.endMonth === anchorMonth;
       const color  = r.type==='income' ? 'var(--success)' : 'var(--danger)';
       return `<div class="account-row">
         <div class="account-icon ${r.type==='income'?'ic-green':'ic-red'}">
@@ -2325,6 +2349,7 @@ function renderRecurrings(){
             ${active
               ? '<span class="badge badge-success"><i class="fas fa-check-circle"></i> Ativa</span>'
               : '<span class="badge badge-neutral"><i class="fas fa-stop-circle"></i> Encerrada</span>'}
+            ${finalThisMonth ? '<span class="badge badge-final" style="margin-left:6px"><i class="fas fa-flag-checkered"></i> Última cobrança este mês</span>' : ''}
           </div>
         </div>
         <div style="text-align:right">
