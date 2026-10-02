@@ -272,6 +272,14 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 .investment-summary-card .lbl{font-size:12px;color:var(--muted);margin-bottom:6px}
 .investment-summary-card .amt{font-size:22px;font-weight:700}
 
+/* ── Recurrings ── */
+.recurring-row{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--border)}
+.recurring-row:last-child{border-bottom:none}
+.recurring-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.recurring-info{flex:1;min-width:0}
+.recurring-name{font-weight:500;font-size:14px}
+.recurring-meta{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5}
+
 /* ── Month nav ── */
 .month-nav{display:flex;align-items:center;gap:12px;background:var(--bg);padding:6px 12px;border-radius:10px;font-size:14px;font-weight:500}
 .month-nav button{width:28px;height:28px;border:none;background:#fff;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow)}
@@ -596,9 +604,9 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
   .filter-bar select,.filter-bar .btn{flex:1;min-width:0}
 
   /* ── Account rows ── */
-  .account-row{padding:16px 0}
-  .account-row{align-items:flex-start}
-  .account-row>div:last-child{min-width:96px}
+  .recurring-row{padding:16px 0}
+  .recurring-row{align-items:flex-start}
+  .recurring-row>div:last-child{min-width:96px}
 
   /* ── Buttons ── */
   .btn-sm{padding:9px 14px;font-size:14px}
@@ -1232,11 +1240,11 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 //  CONSTANTS
 // ═══════════════════════════════════════
 const INCOME_CATS  = ['Salário','Freelance','Investimentos','Aluguel Recebido','Presente','Reembolso','Outros'];
-const EXPENSE_CATS = ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Vestuário','Contas','Cartão de Crédito','Assinaturas','Pets','Beleza','Eletrônicos','Outros'];
+const EXPENSE_CATS = ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Vestuário','Contas','Cartão de Crédito','Investimentos','Assinaturas','Pets','Beleza','Eletrônicos','Outros'];
 const CAT_COLORS   = {
   'Alimentação':'#ef4444','Moradia':'#f97316','Transporte':'#eab308','Saúde':'#22c55e',
   'Educação':'#3b82f6','Lazer':'#8b5cf6','Vestuário':'#ec4899','Contas':'#06b6d4',
-  'Assinaturas':'#84cc16','Pets':'#a855f7','Beleza':'#f43f5e','Eletrônicos':'#14b8a6','Outros':'#94a3b8',
+  'Cartão de Crédito':'#f59e0b','Investimentos':'#6366f1','Assinaturas':'#84cc16','Pets':'#a855f7','Beleza':'#f43f5e','Eletrônicos':'#14b8a6','Outros':'#94a3b8',
 };
 const INVESTMENT_TYPES = {
   emergency:{label:'Fundo de emergência', icon:'fa-shield-alt', color:'ic-blue'},
@@ -1587,11 +1595,13 @@ function balanceThroughMonth(targetMonth){
   let bal = getAllEffectiveTx()
     .filter(t => t.date <= targetMonth + '-31')
     .reduce((s,t) => s + (t.type==='income' ? t.amount : -t.amount), 0);
-  const investmentMonths = [...new Set((data.investments || [])
-    .filter(i => i.month <= targetMonth && i.month <= currentMonthStr())
-    .map(i => i.month))];
-  investmentMonths.forEach(m => { bal -= getInvestmentOutflowForMonth(m); });
   const curM = currentMonthStr();
+  let invM = DATA_START_MONTH;
+  const invUntil = targetMonth < curM ? targetMonth : curM;
+  while(invM <= invUntil){
+    bal -= getInvestmentOutflowForMonth(invM);
+    invM = nextMonthStr(invM);
+  }
   if(targetMonth > curM){
     let m = nextMonthStr(curM);
     while(m <= targetMonth){
@@ -1815,6 +1825,41 @@ function monthsFromTo(startMonth,endMonth){ const ms=[]; let m=startMonth; while
 function projectedTxForMonths(months){ return months.flatMap(m=>getTxForMonthProjected(m)); }
 function projectedTxWindow(centerMonth=anchorMonth,past=12,future=12){ return projectedTxForMonths(monthsFromTo(addMonthsStr(centerMonth,-past),addMonthsStr(centerMonth,future))); }
 
+function getInvestmentExpenseVirtualForMonth(month){
+  const base = getMonthInvestmentBase(month);
+  return getInvestmentsForMonth(month).map(inv=>{
+    const actual = getInvestmentActual(inv, month);
+    const planned = getInvestmentPlanAmount(inv, base.surplus);
+    const amount = actual > 0 ? actual : planned;
+    if(amount <= 0) return null;
+    return {
+      id: `inv_${inv.id}_${month}`,
+      type: 'expense',
+      description: `Investimento: ${inv.name}`,
+      amount,
+      category: 'Investimentos',
+      payment: 'Investimento',
+      notes: actual > 0 ? 'Valor investido no mês' : 'Valor planejado para investimento',
+      date: `${month}-01`,
+      paid: true,
+      isInvestment: true,
+      investmentId: inv.id,
+    };
+  }).filter(Boolean);
+}
+
+function getTxForMonthWithInvestments(month){
+  return [...getTxForMonthProjected(month), ...getInvestmentExpenseVirtualForMonth(month)];
+}
+
+function projectedTxForMonthsWithInvestments(months){
+  return months.flatMap(m=>getTxForMonthWithInvestments(m));
+}
+
+function projectedTxWindowWithInvestments(centerMonth=anchorMonth,past=12,future=12){
+  return projectedTxForMonthsWithInvestments(monthsFromTo(addMonthsStr(centerMonth,-past),addMonthsStr(centerMonth,future)));
+}
+
 // ═══════════════════════════════════════
 //  CHARTS
 // ═══════════════════════════════════════
@@ -2006,7 +2051,7 @@ function renderDashboard(){
 //  TRANSACTIONS
 // ═══════════════════════════════════════
 function renderTx(){
-  const txAll=projectedTxWindow(anchorMonth,12,12);
+  const txAll=projectedTxWindowWithInvestments(anchorMonth,12,12);
   const search=document.getElementById('tx-search').value.toLowerCase();
   const type=document.getElementById('tx-filter-type').value;
   const cat=document.getElementById('tx-filter-cat').value;
@@ -2032,15 +2077,15 @@ function renderTx(){
     const paid = isPaid(t);
     return `
     <tr class="${paid?'row-paid':''}">
-      <td><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.payment?`<div class="text-xs text-muted"><i class="fas fa-credit-card" style="font-size:10px"></i> ${t.payment}</div>`:''}</td>
+      <td><div style="font-weight:500">${t.description}${t.isInvestment?` <span style="font-size:10px;color:var(--primary)" title="Investimento"><i class="fas fa-seedling"></i></span>`:''}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.payment?`<div class="text-xs text-muted"><i class="fas fa-credit-card" style="font-size:10px"></i> ${t.payment}</div>`:''}</td>
       <td><span class="badge badge-neutral">${t.category}</span>${paid?` <span class="badge badge-paid" style="margin-left:4px"><i class="fas fa-check"></i> Pago</span>`:''}</td>
       <td><span class="badge ${t.type==='income'?'badge-success':'badge-danger'}">${t.type==='income'?'Receita':'Despesa'}</span></td>
       <td><span class="date-chip">${fmtDate(t.date)}</span></td>
       <td class="text-right ${t.type==='income'?'amt-income':'amt-expense'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</td>
       <td><div style="display:flex;gap:4px;justify-content:flex-end">
-        ${t.type==='expense'?`<button class="btn btn-outline btn-sm btn-icon btn-paid ${paid?'is-paid':''}" onclick="togglePaid('${t.id}')" title="${paid?'Marcar como pendente':'Marcar como pago'}"><i class="fas fa-${paid?'check-circle':'circle'}"></i></button>`:''}
+        ${t.isInvestment?`<button class="btn btn-outline btn-sm btn-icon btn-paid is-paid" title="Investimento já marcado como pago" disabled><i class="fas fa-check-circle"></i></button><button class="btn btn-outline btn-sm btn-icon" onclick="navigate('investments')" title="Ver investimento"><i class="fas fa-seedling"></i></button>`:`${t.type==='expense'?`<button class="btn btn-outline btn-sm btn-icon btn-paid ${paid?'is-paid':''}" onclick="togglePaid('${t.id}')" title="${paid?'Marcar como pendente':'Marcar como pago'}"><i class="fas fa-${paid?'check-circle':'circle'}"></i></button>`:''}
         <button class="btn btn-outline btn-sm btn-icon" onclick="editTx('${t.id}')" title="Editar"><i class="fas fa-edit"></i></button>
-        <button class="btn btn-outline btn-sm btn-icon" onclick="deleteTx('${t.id}')" style="color:var(--danger)" title="Excluir"><i class="fas fa-trash"></i></button>
+        <button class="btn btn-outline btn-sm btn-icon" onclick="deleteTx('${t.id}')" style="color:var(--danger)" title="Excluir"><i class="fas fa-trash"></i></button>`}
       </div></td>
     </tr>`;
   }).join(''):`<tr><td colspan="6"><div class="empty-state"><i class="fas fa-search"></i><p>Nenhum lançamento encontrado.</p></div></td></tr>`;
@@ -2061,18 +2106,21 @@ function renderTypeScreen(type) {
   const isIncome = type === 'income';
   const month    = anchorMonth;
   const prefix   = isIncome ? 'income' : 'expenses';
-  const mTx      = getTxForMonthProjected(month).filter(t => t.type === type);
-  const allType  = projectedTxWindow(month,12,12).filter(t => t.type === type);
+  const txForMonth = m => isIncome ? getTxForMonthProjected(m) : getTxForMonthWithInvestments(m);
+  const txForMonths = months => isIncome ? projectedTxForMonths(months) : projectedTxForMonthsWithInvestments(months);
+  const txWindow = (center,past,future) => isIncome ? projectedTxWindow(center,past,future) : projectedTxWindowWithInvestments(center,past,future);
+  const mTx      = txForMonth(month).filter(t => t.type === type);
+  const allType  = txWindow(month,12,12).filter(t => t.type === type);
   const pm       = prevMonth(month);
-  const pmTotal  = getTxForMonthProjected(pm).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
+  const pmTotal  = txForMonth(pm).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
   const mTotal   = mTx.reduce((s,t) => s+t.amount, 0);
   const ytdKey   = month.substr(0,4);
-  const ytdTotal = projectedTxForMonths(monthsFromTo(`${ytdKey}-01`, month))
+  const ytdTotal = txForMonths(monthsFromTo(`${ytdKey}-01`, month))
     .filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
 
   // Média mensal (últimos 6 meses)
   const last6 = lastNMonths(6);
-  const avg   = last6.map(m => getTxForMonthProjected(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
+  const avg   = last6.map(m => txForMonth(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
   const avgM  = avg.reduce((s,v) => s+v, 0) / 6;
 
   // Maior categoria
@@ -2163,7 +2211,7 @@ function renderTypeScreen(type) {
   // Barras — evolução mensal
   destroyChart(`chart-${prefix}-monthly`);
   const months6 = lastNMonths(6);
-  const monthlyData = months6.map(m => getTxForMonthProjected(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
+  const monthlyData = months6.map(m => txForMonth(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
   const ctx2 = document.getElementById(`chart-${prefix}-monthly`);
   if (ctx2) charts[`chart-${prefix}-monthly`] = new Chart(ctx2, {
     type: 'bar',
@@ -2206,15 +2254,15 @@ function renderTypeScreen(type) {
     const rowTpl = (t) => {
       const paid = isPaid(t);
       return `<tr class="${paid?'row-paid':''}">
-        <td style="padding-left:28px"><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
+        <td style="padding-left:28px"><div style="font-weight:500">${t.description}${t.isInvestment?` <span style="font-size:10px;color:var(--primary)" title="Investimento"><i class="fas fa-seedling"></i></span>`:''}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
         <td>${paid?`<span class="badge badge-paid"><i class="fas fa-check"></i> Pago</span>`:''}</td>
         <td><span class="text-sm text-muted">${t.payment||'—'}</span></td>
         <td><span class="date-chip">${fmtDate(t.date)}</span></td>
         <td class="text-right" style="color:${color};font-weight:600">-${fmt(t.amount)}</td>
         <td><div style="display:flex;gap:4px;justify-content:flex-end">
-          <button class="btn btn-outline btn-sm btn-icon btn-paid ${paid?'is-paid':''}" onclick="togglePaid('${t.id}')" title="${paid?'Marcar como pendente':'Marcar como pago'}"><i class="fas fa-${paid?'check-circle':'circle'}"></i></button>
+          ${t.isInvestment?`<button class="btn btn-outline btn-sm btn-icon btn-paid is-paid" title="Investimento já marcado como pago" disabled><i class="fas fa-check-circle"></i></button><button class="btn btn-outline btn-sm btn-icon" onclick="navigate('investments')" title="Ver investimento"><i class="fas fa-seedling"></i></button>`:`<button class="btn btn-outline btn-sm btn-icon btn-paid ${paid?'is-paid':''}" onclick="togglePaid('${t.id}')" title="${paid?'Marcar como pendente':'Marcar como pago'}"><i class="fas fa-${paid?'check-circle':'circle'}"></i></button>
           <button class="btn btn-outline btn-sm btn-icon" onclick="editTx('${t.id}')"><i class="fas fa-edit"></i></button>
-          <button class="btn btn-outline btn-sm btn-icon" onclick="deleteTx('${t.id}')" style="color:var(--danger)"><i class="fas fa-trash"></i></button>
+          <button class="btn btn-outline btn-sm btn-icon" onclick="deleteTx('${t.id}')" style="color:var(--danger)"><i class="fas fa-trash"></i></button>`}
         </div></td>
       </tr>`;
     };
@@ -2281,13 +2329,13 @@ function renderRecurrings(){
       const active = !r.endMonth || r.endMonth >= today;
       const finalThisMonth = r.type==='expense' && r.endMonth === anchorMonth;
       const color  = r.type==='income' ? 'var(--success)' : 'var(--danger)';
-      return `<div class="account-row">
-        <div class="account-icon ${r.type==='income'?'ic-green':'ic-red'}">
+      return `<div class="recurring-row">
+        <div class="recurring-icon ${r.type==='income'?'ic-green':'ic-red'}">
           <i class="fas fa-sync-alt"></i>
         </div>
-        <div class="account-info">
-          <div class="account-name">${r.description}</div>
-          <div class="account-due">
+        <div class="recurring-info">
+          <div class="recurring-name">${r.description}</div>
+          <div class="recurring-meta">
             <i class="fas fa-tag" style="font-size:10px"></i> ${r.category}
             · Dia ${r.dayOfMonth||1} de cada mês
             · Desde ${r.startMonth}
@@ -2385,10 +2433,12 @@ function removeRecurringEverywhere(id){
 // ═══════════════════════════════════════
 function isPaid(t) {
   if (!t || t.type !== 'expense') return false;
+  if (t.isInvestment) return true;
   if (t.id && t.id.startsWith('rec_')) return !!((data.paidVirtuals||{})[t.id]);
   return !!t.paid;
 }
 function togglePaid(id) {
+  if (id.startsWith('inv_')) return;
   if (id.startsWith('rec_')) {
     if (!data.paidVirtuals) data.paidVirtuals = {};
     data.paidVirtuals[id] = !data.paidVirtuals[id];
