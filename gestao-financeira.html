@@ -1260,7 +1260,7 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 // ═══════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════
-let data = { transactions:[], recurrings:[], investments:[], paidVirtuals:{}, investmentActuals:{} };
+let data = { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, investmentActuals:{} };
 let accessToken = null;
 let driveFileId  = null;
 let currentSection = 'dashboard';
@@ -1406,8 +1406,8 @@ function hasLocalDirty() {
 function resetPastRecords(raw) {
   const clean = { ...raw };
   clean.transactions = (clean.transactions || []).filter(t => (t.date || '').substr(0,7) >= DATA_START_MONTH);
-  delete clean.budgets;
-  delete clean.accounts;
+  clean.budgets = (clean.budgets || []).filter(b => (b.month || '') >= DATA_START_MONTH);
+  clean.accounts = (clean.accounts || []).filter(a => (a.dueDate || '').substr(0,7) >= DATA_START_MONTH);
   clean.investments = (clean.investments || []).filter(i => (i.month || '') >= DATA_START_MONTH);
   clean.investmentActuals = Object.fromEntries(
     Object.entries(clean.investmentActuals || {}).filter(([key]) => {
@@ -1430,6 +1430,8 @@ function resetPastRecords(raw) {
 function hasPastRecords(raw = {}) {
   const beforeStart = m => !!m && m < DATA_START_MONTH;
   return (raw.transactions || []).some(t => beforeStart((t.date || '').substr(0,7))) ||
+    (raw.budgets || []).some(b => beforeStart(b.month)) ||
+    (raw.accounts || []).some(a => beforeStart((a.dueDate || '').substr(0,7))) ||
     (raw.investments || []).some(i => beforeStart(i.month)) ||
     Object.keys(raw.investmentActuals || {}).some(key => {
       const m = key.match(/_(\d{4}-\d{2})$/);
@@ -1443,7 +1445,30 @@ function hasPastRecords(raw = {}) {
 }
 
 function normalizeDataShape(raw = {}) {
-  return resetPastRecords({ transactions:[], recurrings:[], investments:[], paidVirtuals:{}, investmentActuals:{}, ...raw });
+  return resetPastRecords({ transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, investmentActuals:{}, ...raw });
+}
+
+function dataRecordCount(raw = {}) {
+  return (raw.transactions || []).length +
+    (raw.budgets || []).length +
+    (raw.accounts || []).length +
+    (raw.recurrings || []).length +
+    (raw.investments || []).length +
+    Object.keys(raw.paidVirtuals || {}).length +
+    Object.keys(raw.investmentActuals || {}).length;
+}
+
+function isMeaningfullyEmpty(raw = {}) {
+  return dataRecordCount(raw) === 0;
+}
+
+function applyLoadedData(loaded) {
+  const normalized = normalizeDataShape(loaded);
+  data = normalized;
+  refreshCurrentSection();
+  updateSidebarBalance();
+  cacheDataSnapshot();
+  return hasPastRecords(loaded);
 }
 
 let _refreshTimer = null;
@@ -1673,7 +1698,17 @@ async function updateDriveFile(fileId, content) {
 async function loadFromDrive() {
   try {
     setSyncStatus('syncing', 'Carregando...');
+    driveFileId = await findDriveFile();
+    const loaded = driveFileId ? await readDriveFile(driveFileId) : null;
     if (hasLocalDirty()) {
+      if (loaded && dataRecordCount(loaded) > dataRecordCount(data)) {
+        const hadPastRecords = applyLoadedData(loaded);
+        clearLocalDirty();
+        setSyncStatus('synced', 'Dados do Drive preservados');
+        showToast('Dados do Google Drive preservados. O app bloqueou uma sobrescrita local menor.', 'success');
+        if (hadPastRecords) await saveToDrive();
+        return;
+      }
       await saveToDrive({ notify: false });
       if (hasLocalDirty()) {
         setSyncStatus('offline', 'Offline - reconectar');
@@ -1684,16 +1719,9 @@ async function loadFromDrive() {
       showToast('Suas alterações locais foram sincronizadas antes de baixar dados do Drive.', 'success');
       return;
     }
-    driveFileId = await findDriveFile();
     if (driveFileId) {
-      const loaded = await readDriveFile(driveFileId);
-      if (loaded && loaded.transactions) {
-        const normalized = normalizeDataShape(loaded);
-        const hadPastRecords = hasPastRecords(loaded);
-        data = normalized;
-        refreshCurrentSection();
-        updateSidebarBalance();
-        cacheDataSnapshot();
+      if (loaded && !isMeaningfullyEmpty(loaded)) {
+        const hadPastRecords = applyLoadedData(loaded);
         if (hadPastRecords) await saveToDrive();
       }
       setSyncStatus('synced', 'Sincronizado');
@@ -1724,8 +1752,18 @@ async function saveToDrive({ notify = false } = {}) {
   }
   try {
     setSyncStatus('syncing', 'Salvando...');
-    const content = JSON.stringify({ ...data, lastModified: new Date().toISOString(), version: 1 });
     if (!driveFileId) driveFileId = await findDriveFile();
+    if (driveFileId && isMeaningfullyEmpty(data)) {
+      const existing = await readDriveFile(driveFileId);
+      if (existing && !isMeaningfullyEmpty(existing)) {
+        applyLoadedData(existing);
+        clearLocalDirty();
+        setSyncStatus('synced', 'Dados do Drive preservados');
+        showToast('Sincronização protegida: o app evitou salvar dados vazios sobre o Drive.', 'error');
+        return;
+      }
+    }
+    const content = JSON.stringify({ ...data, lastModified: new Date().toISOString(), version: 1 });
     if (driveFileId) {
       await updateDriveFile(driveFileId, content);
     } else {
