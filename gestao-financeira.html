@@ -794,6 +794,9 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
         <i class="fas fa-moon  icon-for-light"></i>
         <i class="fas fa-sun   icon-for-dark"></i>
       </button>
+      <button class="btn btn-outline btn-icon" onclick="openBackupModal()" title="Backups e recuperação">
+        <i class="fas fa-shield-alt"></i>
+      </button>
       <button class="btn btn-success" onclick="openTxModal('income')"><i class="fas fa-plus"></i><span class="btn-text"> Receita</span></button>
       <button class="btn btn-danger" onclick="openTxModal('expense')"><i class="fas fa-minus"></i><span class="btn-text"> Despesa</span></button>
     </div>
@@ -1197,8 +1200,9 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
             <option value="other">Outros investimentos</option>
           </select>
         </div>
-        <div class="form-group"><label>% da sobra</label><input type="number" id="inv-pct" placeholder="Ex: 50" min="0" max="100" step="0.01"></div>
-        <div class="form-group"><label>Teto mensal (R$)</label><input type="number" id="inv-cap" placeholder="0,00 = sem teto" min="0" step="0.01"></div>
+        <div class="form-group"><label>% da sobra (opcional)</label><input type="number" id="inv-pct" placeholder="Ex: 20" min="0" max="100" step="0.01"></div>
+        <div class="form-group"><label>Valor fixo mensal (R$)</label><input type="number" id="inv-fixed" placeholder="Ex: 500,00" min="0" step="0.01"></div>
+        <div class="form-group"><label>Teto para percentual (R$)</label><input type="number" id="inv-cap" placeholder="0,00 = sem teto" min="0" step="0.01"></div>
         <div class="form-group"><label>Investido no mês (R$)</label><input type="number" id="inv-actual" placeholder="0,00" min="0" step="0.01"></div>
         <div class="form-group full">
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:400">
@@ -1224,6 +1228,26 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-investment')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveInvestment()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Backups -->
+<div class="modal-overlay" id="modal-backups">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Backups e Recuperação</h2>
+      <button class="modal-close" onclick="closeModal('modal-backups')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-warning" style="margin-bottom:16px">
+        <i class="fas fa-shield-alt"></i>
+        <span>O app cria backups locais e uma cópia no Google Drive antes de sobrescrever dados importantes.</span>
+      </div>
+      <div id="backup-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-backups')">Fechar</button>
     </div>
   </div>
 </div>
@@ -1313,8 +1337,12 @@ const SESSION_KEY = 'gf_token_v2';
 const SESSION_HINT_KEY = 'gf_session_hint_v1';
 const LEGACY_TOKEN_HINT_KEY = 'gf_token_hint';
 const DATA_CACHE_KEY = 'gf_cached_data_v1';
+const DATA_BACKUPS_KEY = 'gf_data_backups_v1';
+const DRIVE_BACKUP_TS_KEY = 'gf_last_drive_backup_ts_v1';
 const LOCAL_DIRTY_KEY = 'gf_local_dirty_v1';
 const SESSION_REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;
+const DRIVE_BACKUP_INTERVAL_MS = 30 * 60 * 1000;
+const MAX_LOCAL_BACKUPS = 20;
 const DATA_START_MONTH = '2026-09';
 
 function saveSession(token, expiresIn) {
@@ -1371,6 +1399,7 @@ function markDriveDisconnected() {
 
 function cacheDataSnapshot() {
   try {
+    saveLocalDataBackup(data, 'cache-snapshot');
     localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
       data,
       cachedAt: Date.now(),
@@ -1462,7 +1491,40 @@ function isMeaningfullyEmpty(raw = {}) {
   return dataRecordCount(raw) === 0;
 }
 
+function isDangerousDataShrink(next = {}, existing = {}) {
+  const nextCount = dataRecordCount(next);
+  const existingCount = dataRecordCount(existing);
+  if (existingCount < 10) return false;
+  return nextCount <= existingCount * 0.75 && (existingCount - nextCount) >= 5;
+}
+
+function saveLocalDataBackup(raw = data, reason = 'snapshot') {
+  if (!raw || isMeaningfullyEmpty(raw)) return;
+  try {
+    const backupData = JSON.parse(JSON.stringify(raw));
+    const serialized = JSON.stringify(backupData);
+    const current = JSON.parse(localStorage.getItem(DATA_BACKUPS_KEY) || '[]');
+    if (current[0] && current[0].signature === serialized) return;
+    current.unshift({
+      createdAt: Date.now(),
+      reason,
+      recordCount: dataRecordCount(backupData),
+      signature: serialized,
+      data: backupData
+    });
+    const trimmed = current.slice(0, MAX_LOCAL_BACKUPS).map(b => ({
+      createdAt: b.createdAt,
+      reason: b.reason,
+      recordCount: b.recordCount,
+      signature: b.signature,
+      data: b.data
+    }));
+    localStorage.setItem(DATA_BACKUPS_KEY, JSON.stringify(trimmed));
+  } catch(_) {}
+}
+
 function applyLoadedData(loaded) {
+  saveLocalDataBackup(data, 'before-load-from-drive');
   const normalized = normalizeDataShape(loaded);
   data = normalized;
   refreshCurrentSection();
@@ -1613,6 +1675,31 @@ function getInvestmentOutflowForMonth(month) {
   return actual > 0 ? actual : planned;
 }
 
+function getAdvancePaidExpensesAfterMonth(month) {
+  const actualPaid = (data.transactions || [])
+    .filter(t => t.type === 'expense' && t.date && t.date.substr(0,7) > month && isPaid(t));
+
+  const actualRecurringPaidKeys = new Set(
+    actualPaid
+      .filter(t => t.recurringId)
+      .map(t => `${t.recurringId}_${t.date.substr(0,7)}`)
+  );
+
+  const virtualPaid = Object.entries(data.paidVirtuals || {})
+    .filter(([, paid]) => paid)
+    .map(([id]) => {
+      const match = id.match(/^rec_(.+)_(\d{4}-\d{2})$/);
+      if(!match) return null;
+      const recurringId = match[1];
+      const paidMonth = match[2];
+      if(paidMonth <= month || actualRecurringPaidKeys.has(`${recurringId}_${paidMonth}`)) return null;
+      return getRecurringVirtualForMonth(paidMonth).find(t => t.id === id && t.type === 'expense') || null;
+    })
+    .filter(Boolean);
+
+  return [...actualPaid, ...virtualPaid].reduce((s,t) => s + num(t.amount), 0);
+}
+
 // Saldo acumulado até o FIM do mês alvo. Inclui transações reais e recorrências
 // já materializadas até hoje e, para meses futuros, projeta as recorrências dos
 // meses entre o mês real atual e o mês alvo (getAllEffectiveTx só vai até hoje).
@@ -1634,6 +1721,9 @@ function balanceThroughMonth(targetMonth){
       bal -= getInvestmentOutflowForMonth(m);
       m = nextMonthStr(m);
     }
+  }
+  if(targetMonth >= curM){
+    bal -= getAdvancePaidExpensesAfterMonth(targetMonth);
   }
   return bal;
 }
@@ -1688,6 +1778,38 @@ async function createDriveFile(content) {
   return json.id;
 }
 
+async function createDriveBackupFile(existing, reason = 'before-overwrite') {
+  if (!existing || isMeaningfullyEmpty(existing)) return null;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const name = `financas-pro-backup-${stamp}.json`;
+  const content = JSON.stringify({
+    ...existing,
+    backupCreatedAt: new Date().toISOString(),
+    backupReason: reason,
+    backupRecordCount: dataRecordCount(existing)
+  });
+  const meta = JSON.stringify({
+    name,
+    mimeType: 'application/json',
+    appProperties: { source: DRIVE_FILE_NAME, reason }
+  });
+  const body = `--bound\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--bound\r\nContent-Type: application/json\r\n\r\n${content}\r\n--bound--`;
+  const resp = await driveRequest(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
+    { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=bound' }, body }
+  );
+  return resp.json();
+}
+
+async function ensureDriveBackupBeforeOverwrite(existing, reason = 'before-overwrite') {
+  if (!existing || isMeaningfullyEmpty(existing)) return;
+  const now = Date.now();
+  const last = Number(localStorage.getItem(DRIVE_BACKUP_TS_KEY) || 0);
+  if (now - last < DRIVE_BACKUP_INTERVAL_MS) return;
+  await createDriveBackupFile(existing, reason);
+  localStorage.setItem(DRIVE_BACKUP_TS_KEY, String(now));
+}
+
 async function updateDriveFile(fileId, content) {
   await driveRequest(
     `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
@@ -1701,7 +1823,7 @@ async function loadFromDrive() {
     driveFileId = await findDriveFile();
     const loaded = driveFileId ? await readDriveFile(driveFileId) : null;
     if (hasLocalDirty()) {
-      if (loaded && dataRecordCount(loaded) > dataRecordCount(data)) {
+      if (loaded && (dataRecordCount(loaded) > dataRecordCount(data) || isDangerousDataShrink(data, loaded))) {
         const hadPastRecords = applyLoadedData(loaded);
         clearLocalDirty();
         setSyncStatus('synced', 'Dados do Drive preservados');
@@ -1753,14 +1875,26 @@ async function saveToDrive({ notify = false } = {}) {
   try {
     setSyncStatus('syncing', 'Salvando...');
     if (!driveFileId) driveFileId = await findDriveFile();
-    if (driveFileId && isMeaningfullyEmpty(data)) {
-      const existing = await readDriveFile(driveFileId);
+    saveLocalDataBackup(data, 'before-save-to-drive');
+    let existing = null;
+    if (driveFileId) {
+      existing = await readDriveFile(driveFileId);
       if (existing && !isMeaningfullyEmpty(existing)) {
-        applyLoadedData(existing);
-        clearLocalDirty();
-        setSyncStatus('synced', 'Dados do Drive preservados');
-        showToast('Sincronização protegida: o app evitou salvar dados vazios sobre o Drive.', 'error');
-        return;
+        if (isMeaningfullyEmpty(data)) {
+          applyLoadedData(existing);
+          clearLocalDirty();
+          setSyncStatus('synced', 'Dados do Drive preservados');
+          showToast('Sincronização protegida: o app evitou salvar dados vazios sobre o Drive.', 'error');
+          return;
+        }
+        if (isDangerousDataShrink(data, existing)) {
+          applyLoadedData(existing);
+          clearLocalDirty();
+          setSyncStatus('synced', 'Dados do Drive preservados');
+          showToast('Sincronização protegida: o app bloqueou uma redução grande de dados.', 'error');
+          return;
+        }
+        await ensureDriveBackupBeforeOverwrite(existing, 'before-main-save');
       }
     }
     const content = JSON.stringify({ ...data, lastModified: new Date().toISOString(), version: 1 });
@@ -1962,7 +2096,7 @@ function renderDashboard(){
   const pmExp=pmTx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
 
   setMonthLabel('dash-month-lbl', cm);
-  document.getElementById('sidebar-balance').textContent=fmt(bal);
+  updateSidebarBalance(cm);
   document.getElementById('dash-chart-label').textContent=monthFull(cm);
 
   const pct=(a,b)=>b?Math.abs(Math.round((a-b)/b*100)):0;
@@ -2485,6 +2619,7 @@ function togglePaid(id) {
     if (tx) tx.paid = !tx.paid;
   }
   scheduleSave();
+  updateSidebarBalance();
   if (currentSection === 'expenses') renderExpenses();
   else if (currentSection === 'transactions') renderTx();
   else if (currentSection === 'dashboard') renderDashboard();
@@ -2899,9 +3034,8 @@ function deleteTx(id){
   refreshCurrentSection();
 }
 
-function updateSidebarBalance(){
-  // Segue o mês-âncora selecionado e projeta recorrências/lançamentos futuros.
-  document.getElementById('sidebar-balance').textContent = fmt(balanceThroughMonth(anchorMonth));
+function updateSidebarBalance(month = currentMonthStr()){
+  document.getElementById('sidebar-balance').textContent = fmt(balanceThroughMonth(month));
 }
 
 // ═══════════════════════════════════════
@@ -2919,10 +3053,23 @@ function getMonthInvestmentBase(month){
 }
 
 function getInvestmentPlanAmount(inv, surplus){
-  if(surplus<=0) return 0;
-  const byPct = surplus * ((inv.percent||0)/100);
-  const cap = inv.monthlyCap||0;
-  return cap>0 ? Math.min(byPct, cap) : byPct;
+  const fixed = num(inv.fixedAmount);
+  const percent = num(inv.percent);
+  if(surplus<=0 || percent<=0) return fixed;
+  const byPct = surplus * (percent/100);
+  const cap = num(inv.monthlyCap);
+  return fixed + (cap>0 ? Math.min(byPct, cap) : byPct);
+}
+
+function investmentRuleText(inv){
+  const fixed = num(inv.fixedAmount);
+  const percent = num(inv.percent);
+  const cap = num(inv.monthlyCap);
+  const parts = [];
+  if(fixed>0) parts.push(`${fmt(fixed)} fixo/mês`);
+  if(percent>0) parts.push(`${percent.toString().replace('.',',')}% da sobra`);
+  if(percent>0 && cap>0) parts.push(`teto ${fmt(cap)}`);
+  return parts.join(' · ') || 'Sem valor definido';
 }
 
 function investmentActualKey(id, month){
@@ -2958,21 +3105,25 @@ function renderInvestments(){
   const actual=invs.reduce((s,i)=>s+getInvestmentActual(i, month),0);
   const outflow=getInvestmentOutflowForMonth(month);
   const balanceAfterInvestment=base.surplus-outflow;
-  const pctTotal=invs.reduce((s,i)=>s+(i.percent||0),0);
+  const pctTotal=invs.reduce((s,i)=>s+num(i.percent),0);
+  const fixedTotal=invs.reduce((s,i)=>s+num(i.fixedAmount),0);
+  const plannedRuleParts=[];
+  if(pctTotal>0) plannedRuleParts.push(`${Math.round(pctTotal)}% da sobra`);
+  if(fixedTotal>0) plannedRuleParts.push(`${fmt(fixedTotal)} fixo/mês`);
   const remaining=Math.max(balanceAfterInvestment,0);
   const progress=planned>0 ? Math.min(actual/planned*100,100) : 0;
-  document.getElementById('sidebar-balance').textContent=fmt(balanceThroughMonth(month));
+  updateSidebarBalance(month);
 
   document.getElementById('investment-stats').innerHTML=`
     <div class="stat-card"><div class="stat-icon ic-green"><i class="fas fa-arrow-up"></i></div><div class="stat-label">Receitas do mês</div><div class="stat-value text-success">${fmt(base.income)}</div></div>
     <div class="stat-card"><div class="stat-icon ic-red"><i class="fas fa-arrow-down"></i></div><div class="stat-label">Despesas do mês</div><div class="stat-value text-danger">${fmt(base.expenses)}</div></div>
     <div class="stat-card"><div class="stat-icon ic-blue"><i class="fas fa-coins"></i></div><div class="stat-label">Saldo após investir</div><div class="stat-value" style="color:${balanceAfterInvestment>=0?'var(--success)':'var(--danger)'}">${fmt(balanceAfterInvestment)}</div><div class="stat-change text-muted">${outflow?`-${fmt(outflow)} em investimentos`:'sem investimento lançado'}</div></div>
-    <div class="stat-card"><div class="stat-icon ic-purple"><i class="fas fa-seedling"></i></div><div class="stat-label">Investimento planejado</div><div class="stat-value">${fmt(planned)}</div><div class="stat-change text-muted">${Math.round(pctTotal)}% da sobra</div></div>
+    <div class="stat-card"><div class="stat-icon ic-purple"><i class="fas fa-seedling"></i></div><div class="stat-label">Investimento planejado</div><div class="stat-value">${fmt(planned)}</div><div class="stat-change text-muted">${plannedRuleParts.join(' · ') || 'sem meta definida'}</div></div>
   `;
 
   let alerts='';
-  if(base.surplus<=0){
-    alerts+=`<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i><span>Este mês não tem sobra positiva. As metas ficam cadastradas, mas o valor planejado fica em R$ 0,00 até as receitas superarem as despesas.</span></div>`;
+  if(base.surplus<=0 && invs.some(i=>num(i.percent)>0)){
+    alerts+=`<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i><span>Este mês não tem sobra positiva. A parte por percentual fica em R$ 0,00 até as receitas superarem as despesas; valores fixos continuam no planejamento.</span></div>`;
   }
   if(pctTotal>100){
     alerts+=`<div class="alert alert-danger"><i class="fas fa-chart-pie"></i><span>As metas somam ${pctTotal.toFixed(2).replace('.',',')}% da sobra. Ajuste para no máximo 100%.</span></div>`;
@@ -2990,13 +3141,12 @@ function renderInvestments(){
     const plan=getInvestmentPlanAmount(inv, base.surplus);
     const done=getInvestmentActual(inv, month);
     const pct=plan>0?Math.min(done/plan*100,100):0;
-    const capTxt=inv.monthlyCap>0?` · teto ${fmt(inv.monthlyCap)}`:'';
     const recTxt=inv.recurring?` · recorrente desde ${monthFull(inv.startMonth||inv.month)}${inv.endMonth?` até ${monthFull(inv.endMonth)}`:''}`:'';
     return `<div class="investment-row">
       <div class="investment-icon ${meta.color}"><i class="fas ${meta.icon}"></i></div>
       <div class="investment-info">
         <div class="investment-name">${inv.name}${inv.recurring?' <span class="badge badge-info" style="font-size:10px">Recorrente</span>':''}</div>
-        <div class="investment-meta">${meta.label} · ${inv.percent}% da sobra${capTxt}${recTxt}${inv.notes?`<br>${inv.notes}`:''}</div>
+        <div class="investment-meta">${meta.label} · ${investmentRuleText(inv)}${recTxt}${inv.notes?`<br>${inv.notes}`:''}</div>
         <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" style="width:${pct}%;background:${done>=plan&&plan>0?'var(--success)':'var(--primary)'}"></div></div>
         <div style="display:flex;justify-content:space-between;margin-top:5px">
           <span class="text-xs text-muted">Planejado: ${fmt(plan)}</span>
@@ -3039,6 +3189,7 @@ function openInvestmentModal(){
   document.getElementById('inv-name').value='';
   document.getElementById('inv-type').value='emergency';
   document.getElementById('inv-pct').value='';
+  document.getElementById('inv-fixed').value='';
   document.getElementById('inv-cap').value='';
   document.getElementById('inv-actual').value='';
   document.getElementById('inv-recurring').checked=true;
@@ -3057,7 +3208,8 @@ function editInvestment(id){
   document.getElementById('inv-id').value=id;
   document.getElementById('inv-name').value=inv.name;
   document.getElementById('inv-type').value=inv.type;
-  document.getElementById('inv-pct').value=inv.percent;
+  document.getElementById('inv-pct').value=inv.percent||'';
+  document.getElementById('inv-fixed').value=inv.fixedAmount||'';
   document.getElementById('inv-cap').value=inv.monthlyCap||'';
   document.getElementById('inv-actual').value=getInvestmentActual(inv, anchorMonth)||'';
   document.getElementById('inv-recurring').checked=!!inv.recurring;
@@ -3078,7 +3230,8 @@ function saveInvestment(){
   if(!data.investmentActuals) data.investmentActuals={};
   const name=document.getElementById('inv-name').value.trim();
   const type=document.getElementById('inv-type').value;
-  const percent=parseFloat(document.getElementById('inv-pct').value);
+  const percent=parseFloat(document.getElementById('inv-pct').value)||0;
+  const fixedAmount=parseFloat(document.getElementById('inv-fixed').value)||0;
   const monthlyCap=parseFloat(document.getElementById('inv-cap').value)||0;
   const actualAmount=parseFloat(document.getElementById('inv-actual').value)||0;
   const recurring=document.getElementById('inv-recurring').checked;
@@ -3086,11 +3239,13 @@ function saveInvestment(){
   const endMonth=recurring?(document.getElementById('inv-end-month').value||null):null;
   const notes=document.getElementById('inv-notes').value.trim();
   if(!name) return showToast('Informe o nome da meta','error');
-  if(Number.isNaN(percent)||percent<=0||percent>100) return showToast('Informe um percentual entre 0,01% e 100%','error');
+  if(percent<0||percent>100) return showToast('Informe um percentual entre 0% e 100%','error');
+  if(fixedAmount<0) return showToast('Informe um valor fixo mensal válido','error');
+  if(percent<=0&&fixedAmount<=0) return showToast('Informe um percentual da sobra ou um valor fixo mensal','error');
   if(monthlyCap<0) return showToast('Informe um teto mensal válido','error');
   if(actualAmount<0) return showToast('Informe um valor investido válido','error');
   if(recurring && endMonth && endMonth<startMonth) return showToast('O mês final não pode ser antes do início','error');
-  const candidate={id:editingInvId||'__new__',month:anchorMonth,startMonth,endMonth,recurring,name,type,percent,monthlyCap,notes};
+  const candidate={id:editingInvId||'__new__',month:anchorMonth,startMonth,endMonth,recurring,name,type,percent,fixedAmount,monthlyCap,notes};
   const totalPct=[...data.investments.filter(i=>i.id!==editingInvId),candidate]
     .filter(i=>{
       if(i.recurring){
@@ -3099,10 +3254,10 @@ function saveInvestment(){
       }
       return i.month===anchorMonth;
     })
-    .reduce((s,i)=>s+(i.percent||0),0);
+    .reduce((s,i)=>s+num(i.percent),0);
   if(totalPct>100) return showToast(`As metas deste mês somariam ${totalPct.toFixed(2).replace('.',',')}%. O máximo é 100%.`,'error');
 
-  const inv={id:editingInvId||uid(),month:recurring?startMonth:anchorMonth,startMonth:recurring?startMonth:null,endMonth,recurring,name,type,percent,monthlyCap,actualAmount:recurring?0:actualAmount,notes};
+  const inv={id:editingInvId||uid(),month:recurring?startMonth:anchorMonth,startMonth:recurring?startMonth:null,endMonth,recurring,name,type,percent,fixedAmount,monthlyCap,actualAmount:recurring?0:actualAmount,notes};
   if(actualAmount>0) data.investmentActuals[investmentActualKey(inv.id, anchorMonth)]=actualAmount;
   else delete data.investmentActuals[investmentActualKey(inv.id, anchorMonth)];
   if(editingInvId){
@@ -3146,6 +3301,53 @@ function exportCSV(){
   a.href=url; a.download=`financas_${todayStr()}.csv`; a.click();
   URL.revokeObjectURL(url);
   showToast('CSV exportado!','success');
+}
+
+// ═══════════════════════════════════════
+//  BACKUPS
+// ═══════════════════════════════════════
+function getLocalBackups() {
+  try { return JSON.parse(localStorage.getItem(DATA_BACKUPS_KEY) || '[]'); }
+  catch(_) { return []; }
+}
+
+function openBackupModal() {
+  const backups = getLocalBackups();
+  const list = document.getElementById('backup-list');
+  if (!backups.length) {
+    list.innerHTML = `<div class="empty-state" style="padding:28px"><i class="fas fa-shield-alt"></i><p>Nenhum backup local encontrado ainda.</p></div>`;
+  } else {
+    list.innerHTML = backups.map((b, idx) => `
+      <div class="investment-row">
+        <div class="investment-icon ic-blue"><i class="fas fa-database"></i></div>
+        <div class="investment-info">
+          <div class="investment-name">${new Date(b.createdAt).toLocaleString('pt-BR')}</div>
+          <div class="investment-meta">${b.recordCount || dataRecordCount(b.data)} registro(s) · ${b.reason || 'backup'}</div>
+        </div>
+        <div>
+          <button class="btn btn-outline btn-sm" onclick="restoreLocalBackup(${idx})"><i class="fas fa-undo"></i> Restaurar</button>
+        </div>
+      </div>
+    `).join('');
+  }
+  document.getElementById('modal-backups').classList.add('open');
+}
+
+function restoreLocalBackup(idx) {
+  const backup = getLocalBackups()[idx];
+  if (!backup || !backup.data) return showToast('Backup não encontrado.', 'error');
+  const count = dataRecordCount(backup.data);
+  if (!count) return showToast('Este backup está vazio e não será restaurado.', 'error');
+  if (!confirm(`Restaurar backup com ${count} registro(s)? O estado atual será salvo em backup antes da troca.`)) return;
+  saveLocalDataBackup(data, 'before-local-restore');
+  data = normalizeDataShape(backup.data);
+  markLocalDirty();
+  cacheDataSnapshot();
+  closeModal('modal-backups');
+  refreshCurrentSection();
+  updateSidebarBalance();
+  scheduleSave();
+  showToast('Backup restaurado. Sincronizando com segurança...', 'success');
 }
 
 // ═══════════════════════════════════════
