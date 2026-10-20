@@ -283,6 +283,8 @@ body.dark .cycle-note{background:rgba(99,102,241,.15);border-color:rgba(99,102,2
 /* ── Month nav ── */
 .month-nav{display:flex;align-items:center;gap:12px;background:var(--bg);padding:6px 12px;border-radius:10px;font-size:14px;font-weight:500}
 .month-nav button{width:28px;height:28px;border:none;background:#fff;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow)}
+.month-nav .month-picker{width:190px;max-width:100%;min-height:32px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font:inherit;letter-spacing:0}
+body.dark .month-picker{color-scheme:dark}
 .date-chip{background:var(--bg);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--muted)}
 .divider{height:1px;background:var(--border);margin:16px 0}
 
@@ -1669,10 +1671,11 @@ function getMonthCashFlow(month) {
 
 function getInvestmentOutflowForMonth(month) {
   const invs = getInvestmentsForMonth(month);
-  const actual = invs.reduce((s,i)=>s+getInvestmentActual(i, month),0);
   const base = getMonthCashFlow(month);
-  const planned = invs.reduce((s,i)=>s+getInvestmentPlanAmount(i, base.surplus),0);
-  return actual > 0 ? actual : planned;
+  return invs.reduce((sum, inv) => {
+    const actual = getInvestmentActual(inv, month);
+    return sum + (actual > 0 ? actual : getInvestmentPlanAmount(inv, base.surplus));
+  }, 0);
 }
 
 function getAdvancePaidExpensesAfterMonth(month) {
@@ -1981,9 +1984,13 @@ function monthFull(ym){ const[y,m]=ym.split('-'); return ['Janeiro','Fevereiro',
 // está sendo usado como "mês atual" do app (diferente do mês real de hoje).
 function setMonthLabel(elId, ym){
   const el = document.getElementById(elId); if(!el) return;
-  const badge = ym === currentMonthStr() ? '' :
-    ` <span style="font-size:10px;color:var(--primary);font-weight:600;background:rgba(99,102,241,.12);padding:1px 7px;border-radius:6px;vertical-align:middle" title="Este mês está sendo usado como o 'mês atual' em todo o app">como mês atual</span>`;
-  el.innerHTML = monthFull(ym) + badge;
+  el.innerHTML = `<input type="month" class="month-picker" aria-label="Selecionar mês e ano" value="${ym}" onchange="selectAnchorMonth(this.value)">`;
+}
+function selectAnchorMonth(month){
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || month < '0001-01') return;
+  anchorMonth = month;
+  refreshCurrentSection();
+  updateSidebarBalance(anchorMonth);
 }
 function todayStr()   { return new Date().toISOString().split('T')[0]; }
 function currentMonthStr() { return todayStr().substr(0,7); }
@@ -2114,7 +2121,7 @@ function renderDashboard(){
   const dashBase = getMonthInvestmentBase(cm);
   const dashPlanned = dashInvs.reduce((s,i)=>s+getInvestmentPlanAmount(i, dashBase.surplus),0);
   const dashActual = dashInvs.reduce((s,i)=>s+getInvestmentActual(i, cm),0);
-  const dashOutflow = dashActual > 0 ? dashActual : dashPlanned;
+  const dashOutflow = invM;
   document.getElementById('dash-investments').innerHTML = dashInvs.length ? `
     <div class="investment-summary" style="padding:16px 16px 0">
       <div class="investment-summary-card"><div class="lbl">Planejado</div><div class="amt">${fmt(dashPlanned)}</div></div>
@@ -2192,10 +2199,8 @@ function renderDashboard(){
     });
     // Chips: saldo no INÍCIO de cada mês — começa no saldo acumulado até o mês
     // anterior ao âncora (projetando recorrências futuras quando necessário).
-    let runBal=balanceThroughMonth(prevMonthStr(cm));
     const chips=projMonths.map((m,i)=>{
-      const startBal=runBal;            // saldo antes das transações do mês
-      runBal+=(pInc[i]-pExp[i]-pInv[i]);        // acumula para o próximo
+      const startBal=balanceThroughMonth(prevMonthStr(m));
       const pos=startBal>=0;
       const isFuture=m>today2;
       const isCur=m===cm;   // destaque no mês-âncora (o "agora" selecionado)
@@ -2636,7 +2641,7 @@ function getTxForMonthProjected(ym) {
 }
 
 function renderProjections() {
-  const cm    = anchorMonth;   // marcador "mês atual" segue o mês-âncora global
+  const cm    = currentMonthStr();
   const today = todayStr();
   document.getElementById('proj-year-lbl').textContent = projYear;
 
@@ -2675,8 +2680,12 @@ function renderProjections() {
     return { ym, label: MONTH_NAMES[i], inc, exp, inv, bal: inc-exp-inv, isFuture, isCurrent, isPast };
   });
 
-  let accumulated = balanceBeforeYear(projYear);
-  rows.forEach(r => { r.accBefore = accumulated; accumulated += r.bal; r.accAfter = accumulated; });
+  rows.forEach(r => {
+    r.accBefore = balanceThroughMonth(prevMonthStr(r.ym));
+    r.accAfter = balanceThroughMonth(r.ym);
+    r.advanceAdjustment = r.accAfter - r.accBefore - r.bal;
+    r.bal = r.accAfter - r.accBefore;
+  });
 
   // YTD stats (past + current months)
   const ytdRows  = rows.filter(r => !r.isFuture);
@@ -2785,7 +2794,7 @@ function renderProjections() {
       <td class="text-right" style="color:${startColor};font-weight:700;background:rgba(99,102,241,.04)">${fmt(r.accBefore)}</td>
       <td class="text-right amt-income">${r.inc>0?'+'+fmt(r.inc):'—'}</td>
       <td class="text-right amt-expense">${r.exp>0?'-'+fmt(r.exp):'—'}</td>
-      <td class="text-right" style="color:${balColor};font-weight:600">${r.inc||r.exp||r.inv?(r.bal>=0?'+':'')+fmt(r.bal):'—'}${r.inv?`<div class="text-xs text-muted">inv. -${fmt(r.inv)}</div>`:''}</td>
+      <td class="text-right" style="color:${balColor};font-weight:600">${r.inc||r.exp||r.inv||r.advanceAdjustment?(r.bal>=0?'+':'')+fmt(r.bal):'—'}${r.inv?`<div class="text-xs text-muted">inv. -${fmt(r.inv)}</div>`:''}${Math.abs(r.advanceAdjustment)>0.005?`<div class="text-xs text-muted">Antecipações: ${r.advanceAdjustment>0?'+':''}${fmt(r.advanceAdjustment)}</div>`:''}</td>
       <td class="text-right" style="color:${accColor};font-weight:700">${fmt(r.accAfter)}</td>
       <td>${statusBadge}</td>
     </tr>`;
