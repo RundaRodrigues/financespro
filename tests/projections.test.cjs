@@ -14,7 +14,7 @@ function app() {
     document: {
       querySelectorAll: () => [],
       getElementById(id) {
-        if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', classList: { add() {}, remove() {} } });
+        if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', setAttribute() {}, focus() {}, classList: { add() {}, remove() {} } });
         return elements.get(id);
       }
     },
