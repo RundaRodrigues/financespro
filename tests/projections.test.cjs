@@ -79,3 +79,25 @@ test('month selection jumps two years and annual statuses still follow real mont
   assert.doesNotMatch(elements.get('proj-table').innerHTML, /hoje/);
   assert.equal((elements.get('proj-table').innerHTML.match(/Projeção/g) || []).length, 12);
 });
+
+test('investment balance accumulates actual and planned contributions through the selected month', () => {
+  const { run } = app();
+  run(`data.investments = [
+    {id:'a',month:'2026-10',startMonth:'2026-10',endMonth:'2026-12',recurring:true,fixedAmount:500},
+    {id:'b',month:'2026-11',fixedAmount:200}
+  ]; data.investmentActuals={'a_2026-10':400,'a_2026-11':600};`);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-09').total"), 0);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-10').total"), 400);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-11').total"), 1200);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-12').total"), 1700);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2027-01').total"), 1700);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-12').actual"), 1000);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-12').planned"), 700);
+});
+
+test('legacy recurring actual amount is counted in its original month only', () => {
+  const { run } = app();
+  run("data.investments=[{id:'legacy',month:'2026-10',startMonth:'2026-10',recurring:true,fixedAmount:500,actualAmount:400}];");
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-11').actual"), 400);
+  assert.equal(run("getInvestmentBalanceThroughMonth('2026-11').total"), 900);
+});

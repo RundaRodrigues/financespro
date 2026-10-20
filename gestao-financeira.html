@@ -1023,9 +1023,10 @@ body.dark .month-nav,body.dark .month-nav button{background:var(--card)}
       </div>
       <div class="card mb-6">
         <div class="card-header">
-          <div><div class="card-title">Investimentos do Mês</div><div class="card-sub">Entram como saída planejada no saldo</div></div>
+          <div><div class="card-title">Investimentos</div><div class="card-sub">Acumulado e aportes do mês selecionado</div></div>
           <button class="btn btn-outline btn-sm" onclick="navigate('investments')">Ver metas</button>
         </div>
+        <div id="dash-investment-balance"></div>
         <div id="dash-investments"></div>
       </div>
       <div class="grid-2 mb-6">
@@ -1203,6 +1204,7 @@ body.dark .month-nav,body.dark .month-nav button{background:var(--card)}
         </div>
       </div>
       <div id="investment-alerts"></div>
+      <div id="investment-balance"></div>
       <div class="stats-grid" id="investment-stats"></div>
       <div class="grid-2">
         <div class="card">
@@ -1882,6 +1884,29 @@ function getInvestmentOutflowForMonth(month) {
   }, 0);
 }
 
+function getInvestmentBalanceThroughMonth(targetMonth){
+  let total=0, actual=0;
+  for(let month=DATA_START_MONTH;month<=targetMonth;month=nextMonthStr(month)){
+    total+=getInvestmentOutflowForMonth(month);
+    actual+=getInvestmentsForMonth(month).reduce((sum,inv)=>sum+Math.max(0,getInvestmentActual(inv,month)),0);
+  }
+  return {total,actual,planned:Math.max(0,total-actual)};
+}
+
+function renderInvestmentBalance(elementId,month){
+  const balance=getInvestmentBalanceThroughMonth(month);
+  document.getElementById(elementId).innerHTML=`
+    <div class="balance-overview">
+      <div class="balance-heading">Saldo total em investimentos${balance.planned>0?' · previsto':''}</div>
+      <div class="balance-number">${fmt(balance.total)}</div>
+      <div class="balance-context">Acumulado até ${monthFull(month)}</div>
+      <div class="investment-summary">
+        <div class="investment-summary-card"><div class="lbl">Realizado acumulado</div><div class="amt text-success">${fmt(balance.actual)}</div></div>
+        <div class="investment-summary-card"><div class="lbl">Aportes planejados</div><div class="amt">${fmt(balance.planned)}</div></div>
+      </div>
+    </div>`;
+}
+
 function getAdvancePaidExpensesAfterMonth(month) {
   const actualPaid = (data.transactions || [])
     .filter(t => t.type === 'expense' && t.date && t.date.substr(0,7) > month && isPaid(t));
@@ -2399,6 +2424,7 @@ function renderDashboard(){
   const dashPlanned = dashInvs.reduce((s,i)=>s+getInvestmentPlanAmount(i, dashBase.surplus),0);
   const dashActual = dashInvs.reduce((s,i)=>s+getInvestmentActual(i, cm),0);
   const dashOutflow = invM;
+  renderInvestmentBalance('dash-investment-balance',cm);
   document.getElementById('dash-investments').innerHTML = dashInvs.length ? `
     <div class="investment-summary" style="padding:16px 16px 0">
       <div class="investment-summary-card"><div class="lbl">Planejado</div><div class="amt">${fmt(dashPlanned)}</div></div>
@@ -3370,7 +3396,7 @@ function getInvestmentActual(inv, month){
   const actuals = data.investmentActuals || {};
   const key = investmentActualKey(inv.id, month);
   if(actuals[key] !== undefined) return num(actuals[key]);
-  if((inv.month || inv.startMonth) === month) return num(inv.actualAmount);
+  if((inv.sourceMonth || inv.month || inv.startMonth) === month) return num(inv.actualAmount);
   return 0;
 }
 
@@ -3394,6 +3420,7 @@ function renderInvestments(){
   const planned=invs.reduce((s,i)=>s+getInvestmentPlanAmount(i, base.surplus),0);
   const actual=invs.reduce((s,i)=>s+getInvestmentActual(i, month),0);
   const outflow=getInvestmentOutflowForMonth(month);
+  renderInvestmentBalance('investment-balance',month);
   const balanceAfterInvestment=base.surplus-outflow;
   const pctTotal=invs.reduce((s,i)=>s+num(i.percent),0);
   const fixedTotal=invs.reduce((s,i)=>s+num(i.fixedAmount),0);
