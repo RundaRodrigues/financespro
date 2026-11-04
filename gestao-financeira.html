@@ -1904,9 +1904,20 @@ function showApp() {
 // ═══════════════════════════════════════
 //  RECURRENCE HELPERS
 // ═══════════════════════════════════════
+function getRecurringFirstMonth(recurring){
+  return (data.transactions || [])
+    .filter(t=>t.recurringId===recurring.id && t.date)
+    .reduce((first,t)=>t.date.slice(0,7)<first?t.date.slice(0,7):first,recurring.startMonth);
+}
+
 function getRecurringVirtualForMonth(month) {
+  // A stored occurrence already represents that recurrence in this month.
+  const materialized=new Set((data.transactions||[])
+    .filter(t=>t.recurringId && t.date.startsWith(month))
+    .map(t=>t.recurringId));
   return (data.recurrings || [])
     .filter(r => r.startMonth <= month && (!r.endMonth || r.endMonth >= month))
+    .filter(r => !materialized.has(r.id))
     .map(r => ({
       id: `rec_${r.id}_${month}`,
       type: r.type,
@@ -2939,7 +2950,7 @@ function renderRecurrings(){
           <div class="recurring-meta">
             <i class="fas fa-tag" style="font-size:10px"></i> ${r.category}
             · Dia ${r.dayOfMonth||1} de cada mês
-            · Desde ${r.startMonth}
+            · Desde ${monthFull(getRecurringFirstMonth(r))}
             ${r.endMonth ? `· Até ${r.endMonth}` : ''}
           </div>
           <div style="margin-top:4px">
@@ -2987,13 +2998,15 @@ function renderRecurrings(){
 
 function editRecurring(id){
   const r = (data.recurrings||[]).find(r=>r.id===id); if(!r)return;
+  const firstMonth=getRecurringFirstMonth(r);
+  const firstOccurrence=data.transactions.find(t=>t.recurringId===id && t.date.startsWith(firstMonth));
   // open modal pre-filled as recurring
-  editingTxId = `rec_${id}_${r.startMonth}`;
+  editingTxId = `rec_${id}_${firstMonth}`;
   document.getElementById('modal-tx-title').textContent='Editar Recorrência';
   document.getElementById('tx-id').value=editingTxId;
   document.getElementById('tx-desc').value=r.description;
   document.getElementById('tx-amount').value=r.amount;
-  document.getElementById('tx-date').value=`${r.startMonth}-${String(r.dayOfMonth||1).padStart(2,'0')}`;
+  document.getElementById('tx-date').value=firstOccurrence?.date||`${firstMonth}-${String(r.dayOfMonth||1).padStart(2,'0')}`;
   document.getElementById('tx-notes').value=r.notes||'';
   document.getElementById('tx-payment').value=r.payment||'Dinheiro';
   document.getElementById('tx-recurring').checked=true;
@@ -3377,20 +3390,19 @@ function saveTx(){
     const dayOfMonth = parseInt(document.getElementById('tx-day').value)||1;
     const endMonth   = document.getElementById('tx-end-month').value||null;
     const startMonth = date.substr(0,7);
+    if(endMonth && endMonth<startMonth) return showFieldError('tx-end-month','Escolha um mês final igual ou posterior ao início.');
     const recId = uid();
 
     // 1. Save actual transaction for the current month (shows up in Entradas/Despesas)
     data.transactions.push({
       id: uid(), type, description: desc, amount, date,
-      category: cat, payment, notes, isRecurring: true, recurringId: recId
+      category: cat, payment, notes, isRecurring: true, recurringId: recId,
+      endMonth, isLastRecurringMonth: !!endMonth && endMonth===startMonth
     });
 
-    // 2. Save template starting from NEXT month (future projection)
-    const [sy, sm] = startMonth.split('-').map(Number);
-    const nextDt   = new Date(sy, sm, 1);
-    const nextMonth= `${nextDt.getFullYear()}-${String(nextDt.getMonth()+1).padStart(2,'0')}`;
+    // The template starts with the first occurrence; virtual generation skips it.
     if(!data.recurrings) data.recurrings=[];
-    data.recurrings.push({id:recId,type,description:desc,amount,category:cat,payment,notes,startMonth:nextMonth,endMonth,dayOfMonth});
+    data.recurrings.push({id:recId,type,description:desc,amount,category:cat,payment,notes,startMonth,endMonth,dayOfMonth});
     showToast('Recorrência criada!','success');
   } else if(editingTxId && editingTxId.startsWith('rec_')){
     // editing a recurring template — preserve history for past months
@@ -3402,6 +3414,8 @@ function saveTx(){
       const endMonth   = document.getElementById('tx-end-month').value||null;
       const dayOfMonth = parseInt(document.getElementById('tx-day').value)||1;
       const orig = data.recurrings[i];
+      const effectiveStart=fromMonth>orig.startMonth?fromMonth:newStartMonth;
+      if(endMonth && endMonth<effectiveStart) return showFieldError('tx-end-month','Escolha um mês final igual ou posterior ao início.');
 
       if(fromMonth > orig.startMonth){
         // Editing mid-history: split template — old ends before fromMonth, new starts at fromMonth
@@ -3416,16 +3430,22 @@ function saveTx(){
         });
         showToast(`Recorrência atualizada a partir de ${monthFull(fromMonth)}. Meses anteriores preservados.`, 'success');
       } else {
+        const firstMonth=getRecurringFirstMonth(orig);
         // Editing from the start (includes changing startMonth via date field)
         data.recurrings[i] = {
           ...orig, type, description: desc, amount,
           category: cat, payment, notes, endMonth, dayOfMonth,
           startMonth: newStartMonth   // ← aplica o novo mês de início
         };
-        // Remove transações reais desta recorrência que agora ficaram antes do novo início
-        if(newStartMonth > orig.startMonth){
-          data.transactions = data.transactions.filter(t =>
-            !(t.recurringId === orig.id && t.date.substr(0,7) < newStartMonth)
+        data.transactions=data.transactions.map(t=>
+          t.recurringId===orig.id && t.date.startsWith(firstMonth)
+            ? {...t,type,description:desc,amount,category:cat,payment,notes,date,
+                endMonth,isLastRecurringMonth:!!endMonth&&endMonth===newStartMonth}
+            : t
+        );
+        if(newStartMonth>firstMonth){
+          data.transactions=data.transactions.filter(t=>
+            !(t.recurringId===orig.id && t.date.slice(0,7)<newStartMonth)
           );
         }
         showToast('Recorrência atualizada!','success');

@@ -11,10 +11,11 @@ function app() {
   const elements = new Map();
   const context = vm.createContext({
     localStorage: { getItem: () => null },
+    setTimeout: callback => { callback(); return 0; },
     document: {
       querySelectorAll: () => [],
       getElementById(id) {
-        if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', setAttribute() {}, focus() {}, classList: { add() {}, remove() {} } });
+        if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', style: {}, setAttribute() {}, focus() {}, classList: { add() {}, remove() {} } });
         return elements.get(id);
       }
     },
@@ -35,6 +36,78 @@ test('future expenses paid now reduce current balance only once', () => {
   assert.equal(run("balanceThroughMonth('2026-11')"), 0);
   run('data.transactions[1].paid = false');
   assert.equal(run("balanceThroughMonth('2026-10')"), 1000);
+});
+
+function prepareRecurringForm(instance, overrides = {}) {
+  const values = {
+    'tx-type': 'expense', 'tx-desc': 'Aluguel', 'tx-amount': '1000',
+    'tx-date': '2026-11-04', 'tx-cat': 'Moradia', 'tx-payment': 'PIX',
+    'tx-notes': '', 'tx-day': '10', 'tx-end-month': '2027-01', ...overrides
+  };
+  for (const [id, value] of Object.entries(values)) instance.elements.set(id, { value });
+  instance.elements.set('tx-recurring', { checked: true });
+  instance.run(`closeModal=()=>{}; scheduleSave=()=>{}; updateSidebarBalance=()=>{};
+    refreshCurrentSection=()=>{}; showToast=()=>{}; openModal=()=>{}; selectTxType=()=>{};
+    showFieldError=(id,message)=>{throw new Error(id+': '+message);};`);
+}
+
+test('new recurrence starts in the selected month without duplicating its first occurrence', () => {
+  const instance = app();
+  prepareRecurringForm(instance);
+  const { run, elements } = instance;
+  run('saveTx(); renderRecurrings();');
+  assert.equal(run('data.recurrings[0].startMonth'), '2026-11');
+  assert.equal(run("getEffectiveTxForMonth('2026-10').length"), 0);
+  assert.equal(run("getEffectiveTxForMonth('2026-11').length"), 1);
+  assert.equal(run("getEffectiveTxForMonth('2026-11')[0].date"), '2026-11-04');
+  assert.equal(run("getEffectiveTxForMonth('2026-12')[0].date"), '2026-12-10');
+  assert.equal(run("getEffectiveTxForMonth('2027-01').length"), 1);
+  assert.equal(run("getEffectiveTxForMonth('2027-02').length"), 0);
+  assert.match(elements.get('rec-expense-list').innerHTML, /Desde Novembro de 2026/);
+});
+
+test('legacy recurrence displays and edits the actual first month, preserving payment', () => {
+  const instance = app();
+  prepareRecurringForm(instance);
+  const { run, elements } = instance;
+  run(`data.transactions=[{id:'first',recurringId:'legacy',isRecurring:true,type:'expense',amount:1000,date:'2026-11-04',paid:true}];
+    data.recurrings=[{id:'legacy',type:'expense',description:'Aluguel',category:'Moradia',amount:1000,startMonth:'2026-12',dayOfMonth:10}];
+    renderRecurrings(); editRecurring('legacy');`);
+  assert.match(elements.get('rec-expense-list').innerHTML, /Desde Novembro de 2026/);
+  assert.equal(elements.get('tx-date').value, '2026-11-04');
+  elements.get('tx-amount').value = '1200';
+  run('saveTx();');
+  assert.equal(run('data.recurrings[0].startMonth'), '2026-11');
+  assert.equal(run('data.transactions[0].paid'), true);
+  assert.equal(run("getEffectiveTxForMonth('2026-11').length"), 1);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"), 1200);
+  assert.equal(run("getMonthCashFlow('2026-12').expenses"), 1200);
+});
+
+test('single-month recurrence has one final charge and rejects an earlier end month', () => {
+  const instance = app();
+  prepareRecurringForm(instance, { 'tx-end-month': '2026-11' });
+  const { run, elements } = instance;
+  run('saveTx();');
+  assert.equal(run("getEffectiveTxForMonth('2026-11').length"), 1);
+  assert.equal(run("getEffectiveTxForMonth('2026-11')[0].isLastRecurringMonth"), true);
+  assert.equal(run("getEffectiveTxForMonth('2026-12').length"), 0);
+  elements.get('tx-end-month').value = '2026-10';
+  assert.throws(() => run('saveTx();'), /tx-end-month/);
+  assert.equal(run('data.recurrings.length'), 1);
+});
+
+test('moving the start month moves the first charge and preserves its paid status', () => {
+  const instance = app();
+  prepareRecurringForm(instance);
+  const { run, elements } = instance;
+  run('saveTx(); data.transactions[0].paid=true; editRecurring(data.recurrings[0].id);');
+  elements.get('tx-date').value = '2026-12-04';
+  run('saveTx(); renderRecurrings();');
+  assert.equal(run("getEffectiveTxForMonth('2026-11').length"), 0);
+  assert.equal(run("getEffectiveTxForMonth('2026-12').length"), 1);
+  assert.equal(run("getEffectiveTxForMonth('2026-12')[0].paid"), true);
+  assert.match(elements.get('rec-expense-list').innerHTML, /Desde Dezembro de 2026/);
 });
 
 test('recurring advance payments agree across dashboard chips and annual projection', () => {
