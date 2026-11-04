@@ -214,3 +214,30 @@ test('recurring category filter updates lists, chart and totals, and clearing re
   assert.equal(run("charts['chart-rec-categories']===undefined"), true);
   assert.match(elements.get('rec-category-ranking').innerHTML, /Nenhuma despesa recorrente ativa/);
 });
+
+test('recurring filter includes all app categories even when only Pets and Contas have records', () => {
+  const { run, elements } = app();
+  run(`data.recurrings=[
+    {id:'pets',type:'expense',category:'Pets',amount:100,startMonth:'2026-10'},
+    {id:'bills',type:'expense',category:'Contas',amount:200,startMonth:'2026-10'}
+  ]; renderRecurrings();`);
+  const options = elements.get('rec-filter-category').innerHTML;
+  const expected = JSON.parse(run('JSON.stringify([...new Set([...INCOME_CATS,...EXPENSE_CATS])])'));
+  for (const category of expected) assert.ok(options.includes(`value="${category}"`), category);
+  assert.equal((options.match(/value="Outros"/g) || []).length, 1);
+  run("setRecurringCategory('Moradia');");
+  assert.equal(elements.get('rec-filter-category').value, 'Moradia');
+  assert.match(elements.get('rec-expense-list').innerHTML, /Nenhuma recorrência nesta categoria/);
+  assert.match(elements.get('rec-chart-subtitle').textContent, /Moradia/);
+});
+
+test('recurring filter retains custom categories and remains complete with no records', () => {
+  const { run, elements } = app();
+  run("data.recurrings=[{id:'custom',type:'expense',description:'Aporte',category:'Projeto pessoal',amount:100,startMonth:'2026-10'}]; setRecurringCategory('Projeto pessoal');");
+  assert.equal(elements.get('rec-filter-category').value, 'Projeto pessoal');
+  assert.match(elements.get('rec-expense-list').innerHTML, /Aporte/);
+  run('data.recurrings=[]; renderRecurrings();');
+  assert.equal(elements.get('rec-filter-category').value, '');
+  assert.match(elements.get('rec-filter-category').innerHTML, /value="Moradia"/);
+  assert.match(elements.get('rec-filter-category').innerHTML, /value="Salário"/);
+});

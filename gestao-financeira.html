@@ -2973,7 +2973,9 @@ function setRecurringCategory(category){
 
 function renderRecurrings(){
   const filter=document.getElementById('rec-filter-category');
-  const categories=[...new Set((data.recurrings||[]).map(r=>r.category))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  const categories=[...new Set([
+    ...INCOME_CATS,...EXPENSE_CATS,...(data.recurrings||[]).map(r=>r.category)
+  ].filter(category=>typeof category==='string' && category.trim()))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
   const selected=categories.includes(filter.value)?filter.value:'';
   filter.innerHTML='<option value="">Todas as categorias</option>'+categories.map(category=>`<option value="${escapeHtml(category)}"${category===selected?' selected':''}>${escapeHtml(category)}</option>`).join('');
   filter.value=selected;
