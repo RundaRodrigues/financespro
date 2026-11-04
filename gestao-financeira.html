@@ -1254,10 +1254,13 @@ html:has(body.dark){color-scheme:dark}
     <!-- ── RECURRINGS ── -->
     <section class="section" id="section-recurrings">
       <div class="flex items-center justify-between mb-6">
-        <div>
-          <div style="font-size:14px;color:var(--muted);margin-top:4px">Lançamentos que se repetem todo mês automaticamente</div>
+        <div class="month-nav">
+          <button onclick="changeRecurringMonth(-1)" aria-label="Mês anterior"><i class="fas fa-chevron-left" style="font-size:11px" aria-hidden="true"></i></button>
+          <span id="rec-month-lbl"></span>
+          <button onclick="changeRecurringMonth(1)" aria-label="Próximo mês"><i class="fas fa-chevron-right" style="font-size:11px" aria-hidden="true"></i></button>
         </div>
         <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="anchorMonth=currentMonthStr();renderRecurrings()"><i class="fas fa-calendar-check" aria-hidden="true"></i> Mês atual</button>
           <button class="btn btn-success btn-sm" onclick="openTxModal('income');document.getElementById('tx-recurring').checked=true;toggleRecurringOpts()"><i class="fas fa-plus"></i> Nova Entrada Recorrente</button>
           <button class="btn btn-danger btn-sm" onclick="openTxModal('expense');document.getElementById('tx-recurring').checked=true;toggleRecurringOpts()"><i class="fas fa-plus"></i> Nova Despesa Recorrente</button>
         </div>
@@ -2954,7 +2957,7 @@ function renderTypeScreen(type) {
 function renderIncome()   { renderTypeScreen('income'); }
 function renderExpenses() { renderTypeScreen('expense'); }
 
-function getRecurringOverview(category='',month=currentMonthStr()){
+function getRecurringOverview(category='',month=anchorMonth){
   const recs=(data.recurrings||[]).filter(r=>!category || r.category===category);
   const activeRecs=recs.filter(r=>getRecurringFirstMonth(r)<=month && (!r.endMonth || r.endMonth>=month));
   const expenses=activeRecs.filter(r=>r.type==='expense');
@@ -2971,7 +2974,15 @@ function setRecurringCategory(category){
   renderRecurrings();
 }
 
+function changeRecurringMonth(delta){
+  anchorMonth=addMonthsStr(anchorMonth,delta);
+  renderRecurrings();
+}
+
 function renderRecurrings(){
+  const month=anchorMonth;
+  setMonthLabel('rec-month-lbl',month);
+  updateSidebarBalance(month);
   const filter=document.getElementById('rec-filter-category');
   const categories=[...new Set([
     ...INCOME_CATS,...EXPENSE_CATS,...(data.recurrings||[]).map(r=>r.category)
@@ -2979,9 +2990,8 @@ function renderRecurrings(){
   const selected=categories.includes(filter.value)?filter.value:'';
   filter.innerHTML='<option value="">Todas as categorias</option>'+categories.map(category=>`<option value="${escapeHtml(category)}"${category===selected?' selected':''}>${escapeHtml(category)}</option>`).join('');
   filter.value=selected;
-  const {recs,categories:expenseCategories,monthlyIncome,monthlyExp,monthlyBal}=getRecurringOverview(selected);
-  const today = currentMonthStr();
-  document.getElementById('rec-chart-subtitle').textContent=`${monthFull(today)} · ${selected||'Todas as categorias'} · ${fmt(monthlyExp)}/mês em despesas ativas`;
+  const {recs,categories:expenseCategories,monthlyIncome,monthlyExp,monthlyBal}=getRecurringOverview(selected,month);
+  document.getElementById('rec-chart-subtitle').textContent=`${monthFull(month)} · ${selected||'Todas as categorias'} · ${fmt(monthlyExp)}/mês em despesas ativas`;
   makeDonut('chart-rec-categories',expenseCategories.map(c=>({type:'expense',category:c.name,amount:c.amount})));
   document.getElementById('rec-category-ranking').innerHTML=expenseCategories.length?expenseCategories.map(c=>`
     <button class="rec-category-item" data-category="${escapeHtml(c.name)}" onclick="setRecurringCategory(this.dataset.category)" title="Filtrar por ${escapeHtml(c.name)}">
@@ -2992,9 +3002,9 @@ function renderRecurrings(){
   const renderList = (items) => {
     if(!items.length) return `<div class="empty-state" style="padding:32px"><i class="fas fa-sync-alt"></i><p>${selected?'Nenhuma recorrência nesta categoria.':'Nenhuma recorrência cadastrada.'}</p></div>`;
     return items.map(r => {
-      const active = !r.endMonth || r.endMonth >= today;
-      const scheduled=getRecurringFirstMonth(r)>today;
-      const finalThisMonth = r.type==='expense' && r.endMonth === anchorMonth;
+      const active = !r.endMonth || r.endMonth >= month;
+      const scheduled=getRecurringFirstMonth(r)>month;
+      const finalThisMonth = r.type==='expense' && r.endMonth === month;
       const color  = r.type==='income' ? 'var(--success)' : 'var(--danger)';
       return `<div class="recurring-row">
         <div class="recurring-icon ${r.type==='income'?'ic-green':'ic-red'}">

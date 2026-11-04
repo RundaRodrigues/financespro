@@ -241,3 +241,40 @@ test('recurring filter retains custom categories and remains complete with no re
   assert.match(elements.get('rec-filter-category').innerHTML, /value="Moradia"/);
   assert.match(elements.get('rec-filter-category').innerHTML, /value="Salário"/);
 });
+
+test('recurring month selector drives the graph, totals and status instead of the real month', () => {
+  const { run, elements } = app();
+  run(`Chart=function(ctx,config){this.config=config;this.destroy=()=>{};};
+    data.recurrings=[
+      {id:'oct',type:'expense',description:'Somente outubro',category:'Contas',amount:100,startMonth:'2026-10',endMonth:'2026-10'},
+      {id:'nov',type:'expense',description:'Somente novembro',category:'Contas',amount:200,startMonth:'2026-11',endMonth:'2026-11'},
+      {id:'ongoing',type:'expense',description:'Continuada',category:'Contas',amount:300,startMonth:'2026-11'}
+    ]; anchorMonth='2026-11';setRecurringCategory('Contas');`);
+  assert.equal(run('currentMonthStr()'), '2026-10');
+  assert.equal(run("getRecurringOverview('Contas').monthlyExp"), 500);
+  assert.equal(run("charts['chart-rec-categories'].config.data.datasets[0].data[0]"), 500);
+  assert.match(elements.get('rec-month-lbl').innerHTML, /value="2026-11"/);
+  assert.match(elements.get('rec-chart-subtitle').textContent, /Novembro de 2026/);
+  assert.match(elements.get('rec-expense-list').innerHTML, /Última cobrança este mês/);
+  assert.match(elements.get('rec-summary').innerHTML, /500,00/);
+  run('changeRecurringMonth(1);');
+  assert.equal(run('anchorMonth'), '2026-12');
+  assert.equal(elements.get('rec-filter-category').value, 'Contas');
+  assert.equal(run("getRecurringOverview('Contas').monthlyExp"), 300);
+  assert.equal(run("charts['chart-rec-categories'].config.data.datasets[0].data[0]"), 300);
+  assert.doesNotMatch(elements.get('rec-expense-list').innerHTML, /Última cobrança este mês/);
+  assert.match(elements.get('rec-chart-subtitle').textContent, /Dezembro de 2026/);
+});
+
+test('direct recurring month selection and year rollover preserve the shared month', () => {
+  const { run, elements } = app();
+  run("currentSection='recurrings'; refreshCurrentSection=()=>renderRecurrings(); selectAnchorMonth('2028-12');");
+  assert.equal(run('anchorMonth'), '2028-12');
+  assert.match(elements.get('rec-month-lbl').innerHTML, /value="2028-12"/);
+  run('changeRecurringMonth(1);');
+  assert.equal(run('anchorMonth'), '2029-01');
+  run('changeRecurringMonth(-1);');
+  assert.equal(run('anchorMonth'), '2028-12');
+  run('anchorMonth=currentMonthStr();renderRecurrings();');
+  assert.match(elements.get('rec-month-lbl').innerHTML, /value="2026-10"/);
+});
