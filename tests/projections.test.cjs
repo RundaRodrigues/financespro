@@ -174,3 +174,43 @@ test('legacy recurring actual amount is counted in its original month only', () 
   assert.equal(run("getInvestmentBalanceThroughMonth('2026-11').actual"), 400);
   assert.equal(run("getInvestmentBalanceThroughMonth('2026-11').total"), 900);
 });
+
+test('recurring concentration groups active expenses and excludes income, future and ended recurrences', () => {
+  const { run } = app();
+  run(`data.recurrings=[
+    {id:'rent',type:'expense',category:'Moradia',amount:2000,startMonth:'2026-10'},
+    {id:'condo',type:'expense',category:'Moradia',amount:500,startMonth:'2026-11'},
+    {id:'bills',type:'expense',category:'Contas',amount:500,startMonth:'2026-10',endMonth:'2026-11'},
+    {id:'future',type:'expense',category:'Moradia',amount:900,startMonth:'2026-12'},
+    {id:'ended',type:'expense',category:'Contas',amount:300,startMonth:'2026-09',endMonth:'2026-10'},
+    {id:'salary',type:'income',category:'Salário',amount:10000,startMonth:'2026-09'}
+  ];`);
+  const summary = JSON.parse(run("JSON.stringify(getRecurringOverview('', '2026-11'))"));
+  assert.equal(summary.monthlyExp, 3000);
+  assert.equal(summary.monthlyIncome, 10000);
+  assert.equal(summary.monthlyBal, 7000);
+  assert.deepEqual(summary.categories.map(c=>[c.name,c.amount]), [['Moradia',2500],['Contas',500]]);
+  assert.ok(Math.abs(summary.categories.reduce((sum,c)=>sum+c.percent,0)-100)<0.0001);
+});
+
+test('recurring category filter updates lists, chart and totals, and clearing restores them', () => {
+  const { run, elements } = app();
+  run(`currentMonthStr=()=> '2026-11';
+    Chart=function(ctx,config){this.config=config;this.destroy=()=>{};};
+    data.recurrings=[
+      {id:'rent',type:'expense',description:'Aluguel',category:'Moradia',amount:2000,startMonth:'2026-10'},
+      {id:'bills',type:'expense',description:'Energia',category:'Contas',amount:500,startMonth:'2026-10'},
+      {id:'salary',type:'income',description:'Salário',category:'Salário',amount:10000,startMonth:'2026-09'}
+    ];setRecurringCategory('Moradia');`);
+  assert.match(elements.get('rec-expense-list').innerHTML, /Aluguel/);
+  assert.doesNotMatch(elements.get('rec-expense-list').innerHTML, /Energia/);
+  assert.equal(run("charts['chart-rec-categories'].config.data.datasets[0].data[0]"), 2000);
+  assert.match(elements.get('rec-category-ranking').innerHTML, /100%/);
+  run("setRecurringCategory('');");
+  assert.match(elements.get('rec-expense-list').innerHTML, /Energia/);
+  assert.equal(run("charts['chart-rec-categories'].config.data.labels.length"), 2);
+  run("setRecurringCategory('Salário');");
+  assert.equal(run('getRecurringOverview(\'Salário\').monthlyExp'), 0);
+  assert.equal(run("charts['chart-rec-categories']===undefined"), true);
+  assert.match(elements.get('rec-category-ranking').innerHTML, /Nenhuma despesa recorrente ativa/);
+});

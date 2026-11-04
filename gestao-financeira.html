@@ -856,6 +856,15 @@ summary:focus-visible{outline:2px solid var(--primary);outline-offset:3px;border
 .card-title{font-size:16px;font-weight:650}
 .form-group:focus-within>label{color:var(--primary)}
 .field-error{color:var(--danger);font-size:12px;line-height:1.5}
+.rec-category-item{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:12px 0;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;font:inherit;cursor:pointer;min-height:54px}
+.rec-category-item:hover{background:var(--sidebar-hover)}
+.rec-category-item>span:first-child{display:flex;align-items:center;gap:8px;min-width:0;overflow-wrap:anywhere;font-size:14px}
+.rec-category-item strong{font-size:14px;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.rec-category-item small{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.category-swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+#section-recurrings>.filter-bar{align-items:flex-end}
+#section-recurrings>.filter-bar .form-group{flex:1;max-width:360px}
+@media(max-width:768px){#section-recurrings>.filter-bar{grid-template-columns:minmax(0,1fr)}#section-recurrings>.filter-bar .form-group{max-width:none}}
 .toast.success{background:#056657;color:#fff}
 .toast.error{background:#b93648;color:#fff}
 body.dark .type-btn{background:var(--card)}
@@ -1251,6 +1260,20 @@ html:has(body.dark){color-scheme:dark}
         <div style="display:flex;gap:8px">
           <button class="btn btn-success btn-sm" onclick="openTxModal('income');document.getElementById('tx-recurring').checked=true;toggleRecurringOpts()"><i class="fas fa-plus"></i> Nova Entrada Recorrente</button>
           <button class="btn btn-danger btn-sm" onclick="openTxModal('expense');document.getElementById('tx-recurring').checked=true;toggleRecurringOpts()"><i class="fas fa-plus"></i> Nova Despesa Recorrente</button>
+        </div>
+      </div>
+      <div class="filter-bar mb-6">
+        <div class="form-group">
+          <label for="rec-filter-category">Categoria</label>
+          <select id="rec-filter-category" onchange="renderRecurrings()"><option value="">Todas as categorias</option></select>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="setRecurringCategory('')" title="Limpar filtro de categoria" aria-label="Limpar filtro de categoria"><i class="fas fa-filter-circle-xmark" aria-hidden="true"></i> Limpar filtro</button>
+      </div>
+      <div class="card mb-6">
+        <div class="card-header"><div><h2 class="card-title">Onde se concentram os gastos</h2><div class="card-sub" id="rec-chart-subtitle"></div></div></div>
+        <div class="grid-2">
+          <div class="chart-wrap"><canvas id="chart-rec-categories" role="img" aria-label="Despesas recorrentes ativas por categoria"></canvas></div>
+          <div id="rec-category-ranking" aria-live="polite"></div>
         </div>
       </div>
       <div class="grid-2">
@@ -2931,14 +2954,44 @@ function renderTypeScreen(type) {
 function renderIncome()   { renderTypeScreen('income'); }
 function renderExpenses() { renderTypeScreen('expense'); }
 
+function getRecurringOverview(category='',month=currentMonthStr()){
+  const recs=(data.recurrings||[]).filter(r=>!category || r.category===category);
+  const activeRecs=recs.filter(r=>getRecurringFirstMonth(r)<=month && (!r.endMonth || r.endMonth>=month));
+  const expenses=activeRecs.filter(r=>r.type==='expense');
+  const monthlyIncome=activeRecs.filter(r=>r.type==='income').reduce((sum,r)=>sum+num(r.amount),0);
+  const monthlyExp=expenses.reduce((sum,r)=>sum+num(r.amount),0);
+  const totals=new Map();
+  expenses.forEach(r=>totals.set(r.category,(totals.get(r.category)||0)+num(r.amount)));
+  const categories=[...totals.entries()].map(([name,amount])=>({name,amount,percent:monthlyExp>0?amount/monthlyExp*100:0})).sort((a,b)=>b.amount-a.amount);
+  return {recs,categories,monthlyIncome,monthlyExp,monthlyBal:monthlyIncome-monthlyExp};
+}
+
+function setRecurringCategory(category){
+  document.getElementById('rec-filter-category').value=category;
+  renderRecurrings();
+}
+
 function renderRecurrings(){
-  const recs = data.recurrings || [];
+  const filter=document.getElementById('rec-filter-category');
+  const categories=[...new Set((data.recurrings||[]).map(r=>r.category))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  const selected=categories.includes(filter.value)?filter.value:'';
+  filter.innerHTML='<option value="">Todas as categorias</option>'+categories.map(category=>`<option value="${escapeHtml(category)}"${category===selected?' selected':''}>${escapeHtml(category)}</option>`).join('');
+  filter.value=selected;
+  const {recs,categories:expenseCategories,monthlyIncome,monthlyExp,monthlyBal}=getRecurringOverview(selected);
   const today = currentMonthStr();
+  document.getElementById('rec-chart-subtitle').textContent=`${monthFull(today)} · ${selected||'Todas as categorias'} · ${fmt(monthlyExp)}/mês em despesas ativas`;
+  makeDonut('chart-rec-categories',expenseCategories.map(c=>({type:'expense',category:c.name,amount:c.amount})));
+  document.getElementById('rec-category-ranking').innerHTML=expenseCategories.length?expenseCategories.map(c=>`
+    <button class="rec-category-item" data-category="${escapeHtml(c.name)}" onclick="setRecurringCategory(this.dataset.category)" title="Filtrar por ${escapeHtml(c.name)}">
+      <span><i class="category-swatch" style="background:${CAT_COLORS[c.name]||'#94a3b8'}" aria-hidden="true"></i>${escapeHtml(c.name)}</span>
+      <strong>${fmt(c.amount)}</strong><small>${c.percent.toLocaleString('pt-BR',{maximumFractionDigits:1})}% dos gastos recorrentes ativos</small>
+    </button>`).join(''):'<p class="text-muted text-sm">Nenhuma despesa recorrente ativa nesta seleção.</p>';
 
   const renderList = (items) => {
-    if(!items.length) return `<div class="empty-state" style="padding:32px"><i class="fas fa-sync-alt"></i><p>Nenhuma recorrência cadastrada.</p></div>`;
+    if(!items.length) return `<div class="empty-state" style="padding:32px"><i class="fas fa-sync-alt"></i><p>${selected?'Nenhuma recorrência nesta categoria.':'Nenhuma recorrência cadastrada.'}</p></div>`;
     return items.map(r => {
       const active = !r.endMonth || r.endMonth >= today;
+      const scheduled=getRecurringFirstMonth(r)>today;
       const finalThisMonth = r.type==='expense' && r.endMonth === anchorMonth;
       const color  = r.type==='income' ? 'var(--success)' : 'var(--danger)';
       return `<div class="recurring-row">
@@ -2955,7 +3008,7 @@ function renderRecurrings(){
           </div>
           <div style="margin-top:4px">
             ${active
-              ? '<span class="badge badge-success"><i class="fas fa-check-circle"></i> Ativa</span>'
+              ? scheduled?'<span class="badge badge-info"><i class="fas fa-calendar"></i> Agendada</span>':'<span class="badge badge-success"><i class="fas fa-check-circle"></i> Ativa</span>'
               : '<span class="badge badge-neutral"><i class="fas fa-stop-circle"></i> Encerrada</span>'}
             ${finalThisMonth ? '<span class="badge badge-final" style="margin-left:6px"><i class="fas fa-flag-checkered"></i> Última cobrança este mês</span>' : ''}
           </div>
@@ -2973,11 +3026,6 @@ function renderRecurrings(){
 
   document.getElementById('rec-income-list').innerHTML  = renderList(recs.filter(r=>r.type==='income'));
   document.getElementById('rec-expense-list').innerHTML = renderList(recs.filter(r=>r.type==='expense'));
-
-  const activeRecs    = recs.filter(r => !r.endMonth || r.endMonth >= today);
-  const monthlyIncome = activeRecs.filter(r=>r.type==='income').reduce((s,r)=>s+r.amount,0);
-  const monthlyExp    = activeRecs.filter(r=>r.type==='expense').reduce((s,r)=>s+r.amount,0);
-  const monthlyBal    = monthlyIncome - monthlyExp;
 
   document.getElementById('rec-summary').innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px">
