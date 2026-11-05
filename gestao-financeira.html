@@ -870,6 +870,18 @@ summary:focus-visible{outline:2px solid var(--primary);outline-offset:3px;border
 .category-option:hover{background:var(--sidebar-hover)}
 .category-options input{width:18px;height:18px;flex-shrink:0;accent-color:var(--primary)}
 .category-options .category-child{padding-left:26px;color:var(--muted)}
+.category-option-group{border-bottom:1px solid var(--border);padding:4px 0;min-width:0}
+.category-option-group>.category-option:first-child{font-weight:600}
+.cost-breakdown{display:grid;gap:18px;margin-top:16px}
+.cost-group{min-width:0;border-bottom:1px solid var(--border);padding-bottom:16px}
+.cost-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;font-size:14px;overflow-wrap:anywhere}
+.cost-heading>span:last-child{text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+.cost-heading small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+.cost-child{margin:12px 0 0 16px;padding-left:12px;border-left:2px solid var(--border)}
+.cost-track{height:5px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:8px}
+.cost-track span{display:block;height:100%;border-radius:inherit}
+.cat-subgroup-hdr td{padding:12px 20px 12px 28px;background:var(--sidebar-hover)}
+.cat-subgroup-heading{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:13px;font-weight:600}
 .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 #section-recurrings>.filter-bar{align-items:flex-end}
 #section-recurrings>.filter-bar .form-group{flex:1;max-width:360px}
@@ -1132,6 +1144,7 @@ html:has(body.dark){color-scheme:dark}
             <div><div class="card-title">Despesas por Categoria</div><div class="card-sub" id="dash-chart-label"></div></div>
           </div>
           <div class="chart-wrap"><canvas id="chart-cat"></canvas></div>
+          <div id="dash-category-breakdown"></div>
         </div>
         <div class="card">
           <div class="card-header">
@@ -1239,6 +1252,7 @@ html:has(body.dark){color-scheme:dark}
         <div class="card">
           <div class="card-header"><div class="card-title">Despesas por Categoria</div></div>
           <div class="chart-wrap"><canvas id="chart-expenses-cat"></canvas></div>
+          <div id="expenses-category-breakdown"></div>
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Evolução Mensal</div><div class="card-sub">Últimos 6 meses</div></div>
@@ -1397,7 +1411,7 @@ html:has(body.dark){color-scheme:dark}
       </div>
       <div class="grid-2 mb-6">
         <div class="card"><div class="card-header"><div class="card-title">Receitas vs Despesas</div></div><div class="chart-wrap"><canvas id="chart-rep-bar"></canvas></div></div>
-        <div class="card"><div class="card-header"><div class="card-title">Despesas por Categoria</div></div><div class="chart-wrap"><canvas id="chart-rep-pie"></canvas></div></div>
+        <div class="card"><div class="card-header"><div class="card-title">Despesas por Categoria</div></div><div class="chart-wrap"><canvas id="chart-rep-pie"></canvas></div><div id="report-category-breakdown"></div></div>
       </div>
       <div class="card"><div class="card-header"><div class="card-title">Evolução do Saldo</div></div><div class="chart-wrap"><canvas id="chart-rep-line"></canvas></div></div>
     </section>
@@ -1474,7 +1488,7 @@ html:has(body.dark){color-scheme:dark}
         </div>
         <div class="form-group full" id="tx-extra-categories-group">
           <details class="category-picker"><summary>Categorias adicionais <span id="tx-category-count" aria-live="polite"></span></summary>
-            <p class="text-sm text-muted">Selecione quantas precisar. Os bancos pertencem a Cartão de Crédito. A categoria principal organiza os gráficos, sem duplicar o valor da despesa.</p>
+            <p class="text-sm text-muted">Selecione quantas precisar. Carro e Moto pertencem a Transporte; os bancos, a Cartão de Crédito. A categoria principal organiza os gráficos, sem duplicar o valor da despesa.</p>
             <div id="tx-extra-categories" class="category-options"></div>
           </details>
         </div>
@@ -1591,7 +1605,10 @@ html:has(body.dark){color-scheme:dark}
 // ═══════════════════════════════════════
 const INCOME_CATS  = ['Salário','Freelance','Investimentos','Aluguel Recebido','Presente','Reembolso','Outros'];
 const EXPENSE_CATS = ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Vestuário','Contas','Cartão de Crédito','Investimentos','Assinaturas','Pets','Beleza','Eletrônicos','Outros'];
-const CATEGORY_CHILDREN = {'Cartão de Crédito':['Itaú','Nubank','Inter','Mercado Pago','Santander']};
+const CATEGORY_CHILDREN = {
+  'Transporte':['Carro','Moto'],
+  'Cartão de Crédito':['Itaú','Nubank','Inter','Mercado Pago','Santander']
+};
 const CATEGORY_SEPARATOR = ' › ';
 
 function categoryParent(category){
@@ -1620,13 +1637,50 @@ function categoryChoices(type,records=[]){
   return [...new Set([...builtIn,...records.flatMap(transactionCategories)])];
 }
 function categoryOptions(categories,selected=''){
-  return categories.map(c=>`<option value="${escapeHtml(c)}"${c===selected?' selected':''}>${escapeHtml(c)}</option>`).join('');
+  const option=c=>`<option value="${escapeHtml(c)}"${c===selected?' selected':''}>${escapeHtml(c)}</option>`;
+  return categories.filter(c=>!categoryParent(c)).map(root=>{
+    const children=categories.filter(c=>categoryParent(c)===root);
+    return children.length?`<optgroup label="${escapeHtml(root)}">${option(root)}${children.map(option).join('')}</optgroup>`:option(root);
+  }).join('');
+}
+function categoryBreakdownKey(tx){
+  const primary=tx.category||'Outros';
+  if(categoryParent(primary)) return primary;
+  const children=categoryLeaves(tx).filter(c=>categoryParent(c)===primary);
+  // A single child of the primary category refines the group. Multiple children
+  // stay in the unallocated parent: never divide or duplicate money implicitly.
+  return children.length===1?children[0]:primary;
 }
 function categoryTotals(records){
-  // Classify each amount once, rolling the primary bank up into its parent.
   const totals={};
-  records.forEach(tx=>{const amount=monthlyExpenseAmount(tx);if(!amount)return;const root=categoryRoot(tx.category);totals[root]=(totals[root]||0)+amount;});
+  records.forEach(tx=>{const amount=monthlyExpenseAmount(tx);if(!amount)return;const key=categoryBreakdownKey(tx);totals[key]=(totals[key]||0)+amount;});
   return totals;
+}
+function categoryHierarchy(records){
+  const groups=new Map();
+  Object.entries(categoryTotals(records)).forEach(([name,amount])=>{
+    const root=categoryRoot(name);
+    if(!groups.has(root)) groups.set(root,{name:root,amount:0,children:[]});
+    const group=groups.get(root);
+    group.amount+=amount;
+    group.children.push({name,amount});
+  });
+  return [...groups.values()].sort((a,b)=>b.amount-a.amount).map(group=>({...group,children:group.children.sort((a,b)=>b.amount-a.amount)}));
+}
+function categoryColor(category){ return CAT_COLORS[category]||CAT_COLORS[categoryRoot(category)]||'#94a3b8'; }
+function renderCategoryBreakdown(id,records){
+  const groups=categoryHierarchy(records.filter(t=>t.type==='expense'));
+  const total=groups.reduce((sum,group)=>sum+group.amount,0);
+  const percent=amount=>(total>0?amount/total*100:0).toLocaleString('pt-BR',{maximumFractionDigits:1});
+  document.getElementById(id).innerHTML=groups.length?`
+    <p class="text-sm text-muted">Compare os valores e a participação nos gastos do período. Cada despesa entra uma vez, pela categoria principal.</p>
+    <div class="cost-breakdown">${groups.map(group=>`<div class="cost-group">
+      <div class="cost-heading"><strong>${escapeHtml(group.name)}</strong><span><strong>${fmt(group.amount)}</strong><small>${percent(group.amount)}% do total</small></span></div>
+      ${CATEGORY_CHILDREN[group.name]?group.children.map(child=>`<div class="cost-child">
+        <div class="cost-heading"><span>${escapeHtml(child.name===group.name?'Sem divisão por subcategoria':child.name.split(CATEGORY_SEPARATOR).slice(1).join(CATEGORY_SEPARATOR))}</span><span><strong>${fmt(child.amount)}</strong><small>${percent(child.amount)}% do total</small></span></div>
+        <div class="cost-track" aria-hidden="true"><span style="width:${total>0?child.amount/total*100:0}%;background:${categoryColor(child.name)}"></span></div>
+      </div>`).join(''):`<div class="cost-track" aria-hidden="true"><span style="width:${total>0?group.amount/total*100:0}%;background:${categoryColor(group.name)}"></span></div>`}
+    </div>`).join('')}</div>`:'<p class="text-sm text-muted">Nenhuma despesa para comparar neste período.</p>';
 }
 function selectedExtraCategories(){
   return [...document.querySelectorAll('#tx-extra-categories input:checked')].map(input=>input.value);
@@ -1648,14 +1702,17 @@ function setCategoryPicker(tx){
   document.getElementById('tx-extra-categories-group').hidden=type!=='expense';
   document.getElementById('tx-cat-label').textContent=type==='expense'?'Categoria principal':'Categoria';
   const selected=categoryLeaves(tx);
-  document.getElementById('tx-extra-categories').innerHTML=type==='expense'?choices.map(c=>`
-    <label class="category-option${categoryParent(c)?' category-child':''}"><input type="checkbox" value="${escapeHtml(c)}" ${selected.includes(c)&&c!==primary?'checked':''} onchange="syncCategoryPicker()"><span>${escapeHtml(categoryParent(c)?c.split(CATEGORY_SEPARATOR)[1]:c)}</span></label>`).join(''):'';
+  const option=c=>`<label class="category-option${categoryParent(c)?' category-child':''}"><input type="checkbox" value="${escapeHtml(c)}" aria-label="${escapeHtml(c)}" ${selected.includes(c)&&c!==primary?'checked':''} onchange="syncCategoryPicker()"><span>${escapeHtml(categoryParent(c)?c.split(CATEGORY_SEPARATOR)[1]:c)}</span></label>`;
+  document.getElementById('tx-extra-categories').innerHTML=type==='expense'?choices.filter(c=>!categoryParent(c)).map(root=>`<div class="category-option-group">${option(root)}${choices.filter(c=>categoryParent(c)===root).map(option).join('')}</div>`).join(''):'';
   syncCategoryPicker();
 }
 const CAT_COLORS   = {
   'Alimentação':'#ef4444','Moradia':'#f97316','Transporte':'#eab308','Saúde':'#22c55e',
   'Educação':'#3b82f6','Lazer':'#8b5cf6','Vestuário':'#ec4899','Contas':'#06b6d4',
   'Cartão de Crédito':'#f59e0b','Investimentos':'#6366f1','Assinaturas':'#84cc16','Pets':'#a855f7','Beleza':'#f43f5e','Eletrônicos':'#14b8a6','Outros':'#94a3b8',
+  'Transporte › Carro':'#ca8a04','Transporte › Moto':'#65a30d',
+  'Cartão de Crédito › Itaú':'#f97316','Cartão de Crédito › Nubank':'#8b5cf6',
+  'Cartão de Crédito › Inter':'#fb923c','Cartão de Crédito › Mercado Pago':'#0ea5e9','Cartão de Crédito › Santander':'#ef4444',
 };
 const INVESTMENT_TYPES = {
   emergency:{label:'Fundo de emergência', icon:'fa-shield-alt', color:'ic-blue'},
@@ -2546,7 +2603,7 @@ function makeDonut(id, txList){
   setChartEmptyState(id,labels.length===0);
   if(!labels.length) return;
   const ctx=document.getElementById(id); if(!ctx)return;
-  charts[id]=new Chart(ctx,{type:'doughnut',data:{labels,datasets:[{data:vals,backgroundColor:labels.map(l=>CAT_COLORS[l]||'#94a3b8'),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:chartLegendPosition(),labels:{font:{size:12},boxWidth:12,padding:8}},tooltip:{callbacks:{label:c=>` ${c.label}: ${fmt(c.raw)}`}}}}});
+  charts[id]=new Chart(ctx,{type:'doughnut',data:{labels,datasets:[{data:vals,backgroundColor:labels.map(l=>categoryColor(l)),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:chartLegendPosition(),labels:{font:{size:12},boxWidth:12,padding:8}},tooltip:{callbacks:{label:c=>` ${c.label}: ${fmt(c.raw)}`}}}}});
 }
 
 function makeBar(id, months){
@@ -2702,6 +2759,7 @@ function renderDashboard(){
   }
 
   makeDonut('chart-cat',mTx);
+  renderCategoryBreakdown('dash-category-breakdown',mTx);
 
   // Projeção: mês atual + próximos 6
   document.getElementById('dash-projection-subtitle').textContent=`${monthFull(cm)} + próximos ${projectionHorizon} meses`;
@@ -2920,6 +2978,8 @@ function renderTypeScreen(type) {
     })() : ''}
   `;
 
+  if(!isIncome) renderCategoryBreakdown('expenses-category-breakdown',mTx);
+
   // Donut por categoria
   destroyChart(`chart-${prefix}-cat`);
   setChartEmptyState(`chart-${prefix}-cat`,!Object.keys(byCat).length,isIncome?'income':'expense');
@@ -2928,7 +2988,7 @@ function renderTypeScreen(type) {
     const ctx = document.getElementById(`chart-${prefix}-cat`);
     if (ctx) charts[`chart-${prefix}-cat`] = new Chart(ctx, {
       type: 'doughnut',
-      data: { labels, datasets: [{ data: vals, backgroundColor: labels.map(l => CAT_COLORS[l]||'#94a3b8'), borderWidth: 2, borderColor: '#fff' }] },
+      data: { labels, datasets: [{ data: vals, backgroundColor: labels.map(l => categoryColor(l)), borderWidth: 2, borderColor: '#fff' }] },
       options: { responsive:true, maintainAspectRatio:false, plugins: { legend:{position:chartLegendPosition(),labels:{font:{size:12},boxWidth:12,padding:8}}, tooltip:{callbacks:{label:c=>` ${c.label}: ${fmt(c.raw)}`}} } }
     });
   }
@@ -3016,7 +3076,13 @@ function renderTypeScreen(type) {
             </div>
           </td>
         </tr>
-        ${items.map(rowTpl).join('')}`;
+        ${CATEGORY_CHILDREN[cat]?Object.entries(items.reduce((subgroups,t)=>{
+          const key=categoryBreakdownKey(t);
+          (subgroups[key]||=[]).push(t);
+          return subgroups;
+        },{})).sort((a,b)=>b[1].reduce((sum,t)=>sum+monthlyExpenseAmount(t),0)-a[1].reduce((sum,t)=>sum+monthlyExpenseAmount(t),0)).map(([key,subitems])=>`
+          <tr class="cat-subgroup-hdr"><td colspan="6"><div class="cat-subgroup-heading"><span>${escapeHtml(key===cat?'Sem divisão por subcategoria':key.split(CATEGORY_SEPARATOR).slice(1).join(CATEGORY_SEPARATOR))} · ${subitems.length} registro(s)</span><span>${fmt(subitems.reduce((sum,t)=>sum+monthlyExpenseAmount(t),0))}</span></div></td></tr>
+          ${subitems.map(rowTpl).join('')}`).join(''):items.map(rowTpl).join('')}`;
     }).join('');
   } else {
     // ── Income: flat list ──
@@ -3077,12 +3143,18 @@ function renderRecurrings(){
   makeDonut('chart-rec-categories',expenseCategories.map(c=>({type:'expense',category:c.name,amount:c.amount})));
   document.getElementById('rec-category-ranking').innerHTML=expenseCategories.length?expenseCategories.map(c=>`
     <button class="rec-category-item" data-category="${escapeHtml(c.name)}" onclick="setRecurringCategory(this.dataset.category)" title="Filtrar por ${escapeHtml(c.name)}">
-      <span><i class="category-swatch" style="background:${CAT_COLORS[c.name]||'#94a3b8'}" aria-hidden="true"></i>${escapeHtml(c.name)}</span>
+      <span><i class="category-swatch" style="background:${categoryColor(c.name)}" aria-hidden="true"></i>${escapeHtml(c.name)}</span>
       <strong>${fmt(c.amount)}</strong><small>${c.percent.toLocaleString('pt-BR',{maximumFractionDigits:1})}% dos gastos recorrentes ativos</small>
     </button>`).join(''):'<p class="text-muted text-sm">Nenhuma despesa recorrente ativa nesta seleção.</p>';
 
-  const renderList = (items) => {
+  const renderList = (items,grouped=true) => {
     if(!items.length) return `<div class="empty-state" style="padding:32px"><i class="fas fa-sync-alt"></i><p>${selected?'Nenhuma recorrência nesta categoria.':'Nenhuma recorrência cadastrada.'}</p></div>`;
+    if(grouped&&items[0].type==='expense'){
+      const groups=new Map();
+      items.forEach(r=>{const key=categoryBreakdownKey(r);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);});
+      return [...groups.entries()].sort(([a],[b])=>a.localeCompare(b,'pt-BR')).map(([key,group])=>`
+        <div class="rec-subgroup"><h3 class="text-sm" style="padding:14px 0 8px;border-bottom:1px solid var(--border)">${escapeHtml(key)} <span class="badge badge-neutral">${group.length}</span></h3>${renderList(group,false)}</div>`).join('');
+    }
     return items.map(r => {
       const active = !r.endMonth || r.endMonth >= month;
       const scheduled=getRecurringFirstMonth(r)>month;
@@ -3423,6 +3495,7 @@ function renderReports(){
 
   makeBar('chart-rep-bar', months);
   makeDonut('chart-rep-pie', f);
+  renderCategoryBreakdown('report-category-breakdown',f);
 
   const invRows = months.map(month=>{
     const base = getMonthInvestmentBase(month);

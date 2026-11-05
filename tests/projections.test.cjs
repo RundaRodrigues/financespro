@@ -125,7 +125,7 @@ test('bank subcategories inherit credit card and additional categories without d
   }
   assert.equal(run("matchesCategory(data.transactions[0],'Cartão de Crédito › Itaú')"),false);
   assert.equal(run("getMonthCashFlow('2026-11').expenses"),300);
-  assert.deepEqual(JSON.parse(run('JSON.stringify(categoryTotals(data.transactions))')),{'Cartão de Crédito':300});
+  assert.deepEqual(JSON.parse(run('JSON.stringify(categoryTotals(data.transactions))')),{'Cartão de Crédito › Nubank':300});
   assert.deepEqual(JSON.parse(run('JSON.stringify(categoryLeaves(data.transactions[0]))')),['Cartão de Crédito › Nubank','Pets']);
 });
 
@@ -140,6 +140,72 @@ test('all five banks are selectable children and legacy custom categories remain
   assert.ok(choices.includes('Outra'));
   assert.equal(run("matchesCategory({category:'Pets'},'Pets')"),true);
   assert.equal(run("categoryParent('Projeto › Teste')"),'');
+});
+
+test('Carro and Moto inherit Transporte, persist and remain separate in future recurrences', () => {
+  const instance=app();
+  prepareRecurringForm(instance,{'tx-cat':'Transporte › Carro'});
+  const {run}=instance;
+  run("saveTx(); document.getElementById('tx-cat').value='Transporte › Moto';saveTx();");
+  assert.equal(run("categoryParent('Transporte › Carro')"),'Transporte');
+  assert.equal(run("categoryParent('Transporte › Moto')"),'Transporte');
+  assert.equal(run("getRecurringOverview('Transporte','2026-12').monthlyExp"),2000);
+  assert.equal(run("getRecurringOverview('Transporte › Carro','2026-12').monthlyExp"),1000);
+  assert.equal(run("getRecurringOverview('Transporte › Moto','2026-12').monthlyExp"),1000);
+  assert.deepEqual(JSON.parse(run("JSON.stringify(getRecurringOverview('Transporte','2026-12').categories.map(c=>c.name))")),['Transporte › Carro','Transporte › Moto']);
+  assert.match(run("categoryOptions(categoryChoices('expense'))"), /<optgroup label="Transporte">/);
+});
+
+test('cost hierarchy separates vehicles, banks and unallocated expenses without double counting tags', () => {
+  const {run}=app();
+  run(`data.transactions=[
+    {type:'expense',amount:600,category:'Transporte › Carro',categories:['Transporte','Pets']},
+    {type:'expense',amount:200,category:'Transporte',categories:['Transporte › Moto']},
+    {type:'expense',amount:100,category:'Transporte'},
+    {type:'expense',amount:50,category:'Transporte',categories:['Transporte › Carro','Transporte › Moto']},
+    {type:'expense',amount:300,category:'Cartão de Crédito › Nubank'},
+    {type:'expense',amount:150,category:'Cartão de Crédito › Itaú'},
+    {type:'expense',amount:999,category:'Transporte › Carro',date:'2026-11-10',paid:true,paidMonth:'2026-10'}
+  ];`);
+  const groups=JSON.parse(run('JSON.stringify(categoryHierarchy(data.transactions))'));
+  assert.deepEqual(groups.map(g=>[g.name,g.amount]),[['Transporte',950],['Cartão de Crédito',450]]);
+  assert.deepEqual(groups[0].children.map(c=>[c.name,c.amount]),[['Transporte › Carro',600],['Transporte › Moto',200],['Transporte',150]]);
+  assert.equal(groups.reduce((sum,g)=>sum+g.amount,0),1400);
+  assert.equal(run("categoryBreakdownKey({category:'Cartão de Crédito › Nubank',categories:['Transporte › Carro']})"),'Cartão de Crédito › Nubank');
+});
+
+test('expense lists and cost summaries render separate subgroups with correct totals', () => {
+  const {run,elements}=app();
+  run(`anchorMonth='2026-11';data.transactions=[
+    {id:'car',type:'expense',description:'Seguro carro',amount:600,date:'2026-11-10',category:'Transporte › Carro'},
+    {id:'bike',type:'expense',description:'Seguro moto',amount:200,date:'2026-11-10',category:'Transporte › Moto'},
+    {id:'general',type:'expense',description:'Passagem',amount:100,date:'2026-11-10',category:'Transporte'}
+  ];renderExpenses();`);
+  const table=elements.get('expenses-table').innerHTML;
+  assert.equal((table.match(/class="cat-subgroup-hdr"/g)||[]).length,3);
+  for(const name of ['Seguro carro','Seguro moto','Passagem']) assert.equal(table.split(name).length-1,1);
+  const summary=elements.get('expenses-category-breakdown').innerHTML;
+  for(const label of ['Transporte','Carro','Moto','Sem divisão por subcategoria','900,00','600,00','200,00','66,7%','22,2%']) assert.ok(summary.includes(label),label);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),900);
+});
+
+test('dashboard and report charts keep sibling categories separate and reports follow the selected period', () => {
+  const {run,elements}=app();
+  elements.set('report-period',{value:'1'});
+  run(`Chart=function(ctx,config){this.config=config;this.destroy=()=>{};};
+    anchorMonth='2026-11';data.transactions=[
+      {id:'car',type:'expense',description:'Carro',amount:400,date:'2026-11-10',category:'Transporte › Carro'},
+      {id:'bike',type:'expense',description:'Moto',amount:100,date:'2026-11-10',category:'Transporte › Moto'},
+      {id:'past',type:'expense',description:'Outro mês',amount:999,date:'2026-10-10',category:'Transporte › Moto'}
+    ];renderDashboard();renderReports();`);
+  for(const id of ['chart-cat','chart-rep-pie']) {
+    assert.deepEqual(JSON.parse(run(`JSON.stringify(charts['${id}'].config.data.labels)`)),['Transporte › Carro','Transporte › Moto']);
+    assert.deepEqual(JSON.parse(run(`JSON.stringify(charts['${id}'].config.data.datasets[0].data)`)),[400,100]);
+  }
+  for(const id of ['dash-category-breakdown','report-category-breakdown']) {
+    assert.match(elements.get(id).innerHTML,/500,00/);
+    assert.doesNotMatch(elements.get(id).innerHTML,/999,00/);
+  }
 });
 
 test('multiple categories persist through recurring save, future occurrences and editing history', () => {
