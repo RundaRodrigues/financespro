@@ -34,8 +34,73 @@ test('future expenses paid now reduce current balance only once', () => {
   ];`);
   assert.equal(run("balanceThroughMonth('2026-10')"), 0);
   assert.equal(run("balanceThroughMonth('2026-11')"), 0);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"), 0);
   run('data.transactions[1].paid = false');
   assert.equal(run("balanceThroughMonth('2026-10')"), 1000);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"), 1000);
+});
+
+test('advance payment updates forecasts, keeps the record and reverses cleanly', () => {
+  const {run,elements}=app();
+  run(`scheduleSave=()=>{};updateSidebarBalance=()=>{};currentSection='none';
+    data.transactions=[
+      {id:'cash',type:'income',amount:1000,date:'2026-10-01'},
+      {id:'bill',type:'expense',description:'Conta futura',category:'Contas',amount:600,date:'2026-11-10'},
+      {id:'other',type:'expense',description:'Outra conta',category:'Pets',amount:200,date:'2026-11-15'}
+    ]; togglePaid('bill'); anchorMonth='2026-11'; renderExpenses();renderDashboard();projYear=2026;renderProjections();`);
+  assert.equal(run('data.transactions[1].paidMonth'),'2026-10');
+  assert.equal(run("balanceThroughMonth('2026-10')"),400);
+  assert.equal(run("balanceThroughMonth('2026-11')"),200);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),200);
+  assert.match(elements.get('expenses-table').innerHTML,/Conta futura/);
+  assert.match(elements.get('expenses-table').innerHTML,/Pago antecipado/);
+  assert.match(elements.get('expenses-stats').innerHTML,/600,00 pagos antecipadamente/);
+  assert.match(elements.get('dash-stats').innerHTML,/200,00/);
+  assert.deepEqual(JSON.parse(run('JSON.stringify(categoryTotals(getEffectiveTxForMonth("2026-11")))')),{'Pets':200});
+  run("currentMonthStr=()=> '2026-11';");
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),200);
+  run("togglePaid('bill');");
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),800);
+  assert.equal(run('data.transactions[1].paidMonth'),undefined);
+});
+
+test('recurring advance applies only to the paid occurrence and survives reload', () => {
+  const {run}=app();
+  run(`scheduleSave=()=>{};updateSidebarBalance=()=>{};currentSection='none';
+    data.recurrings=[{id:'rent',type:'expense',category:'Moradia',amount:300,startMonth:'2026-11'}];
+    togglePaid('rec_rent_2026-11'); data=normalizeDataShape(JSON.parse(JSON.stringify(data)));`);
+  assert.equal(run("data.paidVirtualMonths['rec_rent_2026-11']"),'2026-10');
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),0);
+  assert.equal(run("getRecurringOverview('Moradia','2026-11').monthlyExp"),0);
+  assert.equal(run("getMonthCashFlow('2026-12').expenses"),300);
+  assert.equal(run("balanceThroughMonth('2026-10')"),-300);
+  assert.equal(run("balanceThroughMonth('2026-11')"),-300);
+  run("currentMonthStr=()=> '2026-11';");
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),0);
+  run("togglePaid('rec_rent_2026-11');");
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),300);
+});
+
+test('payments due in the current month and investments stay in expense totals', () => {
+  const {run}=app();
+  run(`data.transactions=[{id:'bill',type:'expense',amount:400,date:'2026-10-20',paid:true,paidMonth:'2026-10'}];`);
+  assert.equal(run("getMonthCashFlow('2026-10').expenses"),400);
+  assert.equal(run("monthlyExpenseAmount({type:'expense',amount:200,date:'2026-12-01',paid:true,isInvestment:true})"),200);
+});
+
+test('legacy advance payments acquire a persistent payment month without changing their balances', () => {
+  const {run}=app();
+  run(`data=normalizeDataShape({transactions:[
+    {id:'future',type:'expense',amount:100,date:'2026-11-10',paid:true},
+    {id:'current',type:'expense',amount:50,date:'2026-10-10',paid:true}
+  ],recurrings:[{id:'r',type:'expense',amount:75,startMonth:'2026-12'}],paidVirtuals:{'rec_r_2026-12':true}});`);
+  assert.equal(run("balanceThroughMonth('2026-10')"),-225);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),0);
+  assert.equal(run("getMonthCashFlow('2026-12').expenses"),0);
+  run("currentMonthStr=()=> '2026-12'; data=normalizeDataShape(JSON.parse(JSON.stringify(data)));");
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),0);
+  assert.equal(run("getMonthCashFlow('2026-12').expenses"),0);
+  assert.equal(run("getMonthCashFlow('2026-10').expenses"),50);
 });
 
 function prepareRecurringForm(instance, overrides = {}) {
@@ -50,6 +115,60 @@ function prepareRecurringForm(instance, overrides = {}) {
     refreshCurrentSection=()=>{}; showToast=()=>{}; openModal=()=>{}; selectTxType=()=>{};
     showFieldError=(id,message)=>{throw new Error(id+': '+message);};`);
 }
+
+test('bank subcategories inherit credit card and additional categories without duplicate amounts', () => {
+  const {run}=app();
+  run(`data.transactions=[{id:'card',type:'expense',description:'Compra',date:'2026-11-10',amount:300,
+    category:'Cartão de Crédito › Nubank',categories:['Pets','Cartão de Crédito','Pets']}];`);
+  for(const category of ['Cartão de Crédito','Cartão de Crédito › Nubank','Pets']) {
+    assert.equal(run(`matchesCategory(data.transactions[0],${JSON.stringify(category)})`),true);
+  }
+  assert.equal(run("matchesCategory(data.transactions[0],'Cartão de Crédito › Itaú')"),false);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"),300);
+  assert.deepEqual(JSON.parse(run('JSON.stringify(categoryTotals(data.transactions))')),{'Cartão de Crédito':300});
+  assert.deepEqual(JSON.parse(run('JSON.stringify(categoryLeaves(data.transactions[0]))')),['Cartão de Crédito › Nubank','Pets']);
+});
+
+test('all five banks are selectable children and legacy custom categories remain available', () => {
+  const {run}=app();
+  const choices=JSON.parse(run("JSON.stringify(categoryChoices('expense',[{category:'Personalizada',categories:['Outra']}]))"));
+  for(const bank of ['Itaú','Nubank','Inter','Mercado Pago','Santander']) {
+    assert.ok(choices.includes('Cartão de Crédito › '+bank));
+    assert.equal(run(`categoryParent(${JSON.stringify('Cartão de Crédito › '+bank)})`),'Cartão de Crédito');
+  }
+  assert.ok(choices.includes('Personalizada'));
+  assert.ok(choices.includes('Outra'));
+  assert.equal(run("matchesCategory({category:'Pets'},'Pets')"),true);
+  assert.equal(run("categoryParent('Projeto › Teste')"),'');
+});
+
+test('multiple categories persist through recurring save, future occurrences and editing history', () => {
+  const instance=app();
+  prepareRecurringForm(instance,{'tx-cat':'Cartão de Crédito › Inter'});
+  instance.run("selectedExtraCategories=()=>['Contas','Cartão de Crédito']; saveTx();");
+  const {run}=instance;
+  assert.equal(run("matchesCategory(data.recurrings[0],'Contas')"),true);
+  assert.equal(run("matchesCategory(getEffectiveTxForMonth('2027-01')[0],'Cartão de Crédito')"),true);
+  assert.equal(run("getRecurringOverview('Contas','2026-12').monthlyExp"),1000);
+  assert.equal(run("getRecurringOverview('Cartão de Crédito','2026-12').monthlyExp"),1000);
+  assert.equal(run("getRecurringOverview('Cartão de Crédito › Nubank','2026-12').monthlyExp"),0);
+  run("editingTxId='rec_'+data.recurrings[0].id+'_2026-12'; selectedExtraCategories=()=>['Pets']; saveTx();");
+  assert.equal(run("matchesCategory(getEffectiveTxForMonth('2026-11')[0],'Contas')"),true);
+  assert.equal(run("matchesCategory(getEffectiveTxForMonth('2026-12')[0],'Pets')"),true);
+  assert.equal(run("matchesCategory(getEffectiveTxForMonth('2026-12')[0],'Contas')"),false);
+  assert.equal(run("getMonthCashFlow('2026-12').expenses"),1000);
+});
+
+test('editing a paid expense preserves its state while saving additional categories', () => {
+  const instance=app();
+  prepareRecurringForm(instance,{'tx-cat':'Pets'});
+  instance.elements.get('tx-recurring').checked=false;
+  instance.run(`data.transactions=[{id:'paid',type:'expense',amount:100,date:'2026-11-04',category:'Pets',paid:true}];
+    editingTxId='paid'; selectedExtraCategories=()=>['Cartão de Crédito › Santander']; saveTx();`);
+  assert.equal(instance.run('data.transactions[0].paid'),true);
+  assert.equal(instance.run("matchesCategory(data.transactions[0],'Cartão de Crédito')"),true);
+  assert.equal(instance.run('data.transactions.length'),1);
+});
 
 test('new recurrence starts in the selected month without duplicating its first occurrence', () => {
   const instance = app();
@@ -80,7 +199,7 @@ test('legacy recurrence displays and edits the actual first month, preserving pa
   assert.equal(run('data.recurrings[0].startMonth'), '2026-11');
   assert.equal(run('data.transactions[0].paid'), true);
   assert.equal(run("getEffectiveTxForMonth('2026-11').length"), 1);
-  assert.equal(run("getMonthCashFlow('2026-11').expenses"), 1200);
+  assert.equal(run("getMonthCashFlow('2026-11').expenses"), 0);
   assert.equal(run("getMonthCashFlow('2026-12').expenses"), 1200);
 });
 

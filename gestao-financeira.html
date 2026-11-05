@@ -862,6 +862,15 @@ summary:focus-visible{outline:2px solid var(--primary);outline-offset:3px;border
 .rec-category-item strong{font-size:14px;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .rec-category-item small{grid-column:1/-1;font-size:12px;color:var(--muted)}
 .category-swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.category-picker{border:1px solid var(--border);border-radius:10px;padding:12px}
+.category-picker summary{cursor:pointer;min-height:32px;font-weight:600}
+.category-picker p{margin:8px 0 12px;line-height:1.5}
+.category-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px;max-height:280px;overflow:auto}
+.category-options .category-option{display:flex;align-items:center;gap:10px;min-height:44px;margin:0;padding:8px;border-radius:6px;cursor:pointer;font-weight:400}
+.category-option:hover{background:var(--sidebar-hover)}
+.category-options input{width:18px;height:18px;flex-shrink:0;accent-color:var(--primary)}
+.category-options .category-child{padding-left:26px;color:var(--muted)}
+.badge{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 #section-recurrings>.filter-bar{align-items:flex-end}
 #section-recurrings>.filter-bar .form-group{flex:1;max-width:360px}
 @media(max-width:768px){#section-recurrings>.filter-bar{grid-template-columns:minmax(0,1fr)}#section-recurrings>.filter-bar .form-group{max-width:none}}
@@ -1456,12 +1465,18 @@ html:has(body.dark){color-scheme:dark}
         <div class="form-group full"><label>Descrição</label><input type="text" id="tx-desc" placeholder="Ex: Supermercado, Salário..."></div>
         <div class="form-group"><label>Valor (R$)</label><input type="number" id="tx-amount" placeholder="0,00" min="0" step="0.01"></div>
         <div class="form-group"><label>Data</label><input type="date" id="tx-date"></div>
-        <div class="form-group"><label>Categoria</label><select id="tx-cat"></select></div>
+        <div class="form-group"><label for="tx-cat" id="tx-cat-label">Categoria principal</label><select id="tx-cat" onchange="syncCategoryPicker()"></select></div>
         <div class="form-group"><label>Forma de Pagamento</label>
           <select id="tx-payment">
             <option>Dinheiro</option><option>Cartão de Débito</option><option>Cartão de Crédito</option>
             <option>PIX</option><option>Transferência</option><option>Boleto</option>
           </select>
+        </div>
+        <div class="form-group full" id="tx-extra-categories-group">
+          <details class="category-picker"><summary>Categorias adicionais <span id="tx-category-count" aria-live="polite"></span></summary>
+            <p class="text-sm text-muted">Selecione quantas precisar. Os bancos pertencem a Cartão de Crédito. A categoria principal organiza os gráficos, sem duplicar o valor da despesa.</p>
+            <div id="tx-extra-categories" class="category-options"></div>
+          </details>
         </div>
         <div class="form-group full"><label>Observação (opcional)</label><textarea id="tx-notes" placeholder="Informações adicionais..."></textarea></div>
         <div class="form-group full">
@@ -1576,6 +1591,67 @@ html:has(body.dark){color-scheme:dark}
 // ═══════════════════════════════════════
 const INCOME_CATS  = ['Salário','Freelance','Investimentos','Aluguel Recebido','Presente','Reembolso','Outros'];
 const EXPENSE_CATS = ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Vestuário','Contas','Cartão de Crédito','Investimentos','Assinaturas','Pets','Beleza','Eletrônicos','Outros'];
+const CATEGORY_CHILDREN = {'Cartão de Crédito':['Itaú','Nubank','Inter','Mercado Pago','Santander']};
+const CATEGORY_SEPARATOR = ' › ';
+
+function categoryParent(category){
+  // Only registered children inherit a parent; legacy custom categories stay intact.
+  return Object.entries(CATEGORY_CHILDREN).find(([parent,children])=>
+    children.some(child=>category===parent+CATEGORY_SEPARATOR+child))?.[0] || '';
+}
+function categoryRoot(category){ return categoryParent(category)||category||'Outros'; }
+function transactionCategories(tx){
+  const categories=[tx.category,...(Array.isArray(tx.categories)?tx.categories:[])]
+    .filter(c=>typeof c==='string' && c.trim()).map(c=>c.trim());
+  return [...new Set(categories.flatMap(c=>categoryParent(c)?[categoryParent(c),c]:[c]))];
+}
+function categoryLeaves(tx){
+  const categories=transactionCategories(tx);
+  return categories.filter(c=>!categories.some(child=>categoryParent(child)===c));
+}
+function matchesCategory(tx,category){ return !category||transactionCategories(tx).includes(category); }
+function categoryText(tx){ return categoryLeaves(tx).join(' · '); }
+function categoryBadges(tx){
+  return categoryLeaves(tx).map(c=>`<span class="badge badge-neutral" title="${escapeHtml(c)}">${escapeHtml(c)}</span>`).join(' ');
+}
+function categoryChoices(type,records=[]){
+  const roots=type==='income'?INCOME_CATS:type==='expense'?EXPENSE_CATS:[...new Set([...INCOME_CATS,...EXPENSE_CATS])];
+  const builtIn=roots.flatMap(c=>[c,...(type==='income'?[]:CATEGORY_CHILDREN[c]||[]).map(child=>c+CATEGORY_SEPARATOR+child)]);
+  return [...new Set([...builtIn,...records.flatMap(transactionCategories)])];
+}
+function categoryOptions(categories,selected=''){
+  return categories.map(c=>`<option value="${escapeHtml(c)}"${c===selected?' selected':''}>${escapeHtml(c)}</option>`).join('');
+}
+function categoryTotals(records){
+  // Classify each amount once, rolling the primary bank up into its parent.
+  const totals={};
+  records.forEach(tx=>{const amount=monthlyExpenseAmount(tx);if(!amount)return;const root=categoryRoot(tx.category);totals[root]=(totals[root]||0)+amount;});
+  return totals;
+}
+function selectedExtraCategories(){
+  return [...document.querySelectorAll('#tx-extra-categories input:checked')].map(input=>input.value);
+}
+function syncCategoryPicker(){
+  const primary=document.getElementById('tx-cat').value;
+  document.querySelectorAll('#tx-extra-categories input').forEach(input=>{
+    input.disabled=input.value===primary;
+    if(input.disabled) input.checked=false;
+  });
+  document.getElementById('tx-category-count').textContent=selectedExtraCategories().length?`(${selectedExtraCategories().length})`:'';
+}
+function setCategoryPicker(tx){
+  const type=tx.type||document.getElementById('tx-type').value;
+  const choices=categoryChoices(type,[tx,...data.transactions,...(data.recurrings||[])].filter(t=>!t.type||t.type===type));
+  const primary=tx.category||choices[0];
+  document.getElementById('tx-cat').innerHTML=categoryOptions(choices,primary);
+  document.getElementById('tx-cat').value=primary;
+  document.getElementById('tx-extra-categories-group').hidden=type!=='expense';
+  document.getElementById('tx-cat-label').textContent=type==='expense'?'Categoria principal':'Categoria';
+  const selected=categoryLeaves(tx);
+  document.getElementById('tx-extra-categories').innerHTML=type==='expense'?choices.map(c=>`
+    <label class="category-option${categoryParent(c)?' category-child':''}"><input type="checkbox" value="${escapeHtml(c)}" ${selected.includes(c)&&c!==primary?'checked':''} onchange="syncCategoryPicker()"><span>${escapeHtml(categoryParent(c)?c.split(CATEGORY_SEPARATOR)[1]:c)}</span></label>`).join(''):'';
+  syncCategoryPicker();
+}
 const CAT_COLORS   = {
   'Alimentação':'#ef4444','Moradia':'#f97316','Transporte':'#eab308','Saúde':'#22c55e',
   'Educação':'#3b82f6','Lazer':'#8b5cf6','Vestuário':'#ec4899','Contas':'#06b6d4',
@@ -1595,7 +1671,7 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 // ═══════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════
-let data = { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, investmentActuals:{} };
+let data = { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, paidVirtualMonths:{}, investmentActuals:{} };
 let accessToken = null;
 let driveFileId  = null;
 let currentSection = 'dashboard';
@@ -1766,6 +1842,7 @@ function resetPastRecords(raw) {
       return !m || m[1] >= DATA_START_MONTH;
     })
   );
+  clean.paidVirtualMonths=Object.fromEntries(Object.entries(clean.paidVirtualMonths||{}).filter(([id])=>clean.paidVirtuals[id]));
   return clean;
 }
 
@@ -1787,7 +1864,16 @@ function hasPastRecords(raw = {}) {
 }
 
 function normalizeDataShape(raw = {}) {
-  return resetPastRecords({ transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, investmentActuals:{}, ...raw });
+  const normalized=resetPastRecords({ transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, paidVirtualMonths:{}, investmentActuals:{}, ...raw });
+  // Existing paid future bills were already deducted from the current balance.
+  normalized.transactions=normalized.transactions.map(t=>t.type==='expense'&&t.paid&&!t.paidMonth
+    ? {...t,paidMonth:t.date.slice(0,7)>currentMonthStr()?currentMonthStr():t.date.slice(0,7)}:t);
+  normalized.paidVirtualMonths={...(normalized.paidVirtualMonths||{})};
+  Object.entries(normalized.paidVirtuals).forEach(([id,paid])=>{
+    const month=id.match(/_(\d{4}-\d{2})$/)?.[1];
+    if(paid&&month&&!normalized.paidVirtualMonths[id]) normalized.paidVirtualMonths[id]=month>currentMonthStr()?currentMonthStr():month;
+  });
+  return normalized;
 }
 
 function dataRecordCount(raw = {}) {
@@ -1950,6 +2036,7 @@ function getRecurringVirtualForMonth(month) {
       description: r.description,
       amount: r.amount,
       category: r.category,
+      categories: transactionCategories(r),
       payment: r.payment || '',
       notes: r.notes || '',
       date: `${month}-${String(r.dayOfMonth || 1).padStart(2,'0')}`,
@@ -1987,7 +2074,7 @@ function getAllEffectiveTx() {
 function getMonthCashFlow(month) {
   const txM = getTxForMonthProjected(month);
   const income = txM.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-  const expenses = txM.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const expenses = txM.filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0);
   return { income, expenses, surplus: income - expenses };
 }
 
@@ -2454,8 +2541,7 @@ function setChartEmptyState(id,empty,type='expense'){
 
 function makeDonut(id, txList){
   destroyChart(id);
-  const byCat={};
-  txList.filter(t=>t.type==='expense').forEach(t=>{ byCat[t.category]=(byCat[t.category]||0)+t.amount; });
+  const byCat=categoryTotals(txList.filter(t=>t.type==='expense'));
   const labels=Object.keys(byCat), vals=Object.values(byCat);
   setChartEmptyState(id,labels.length===0);
   if(!labels.length) return;
@@ -2467,7 +2553,7 @@ function makeBar(id, months){
   destroyChart(id);
   const ctx=document.getElementById(id); if(!ctx)return;
   const inc=months.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0));
-  const exp=months.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0));
+  const exp=months.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0));
   const inv=months.map(m=>getInvestmentOutflowForMonth(m));
   charts[id]=new Chart(ctx,{type:'bar',data:{labels:months.map(monthLbl),datasets:[{label:'Receitas',data:inc,backgroundColor:'#10b981',borderRadius:6},{label:'Despesas',data:exp,backgroundColor:'#ef4444',borderRadius:6},{label:'Investimentos',data:inv,backgroundColor:'#6366f1',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmt(c.raw)}`}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$ '+v.toLocaleString('pt-BR')}}}}});
 }
@@ -2533,7 +2619,7 @@ function renderDueExpenses(month){
     const overdue=t.date<todayStr()&&month<=currentMonthStr();
     return `<div class="due-row">
       <div class="due-date"><strong>${t.date.slice(8,10)}</strong>${monthLbl(t.date.slice(0,7)).split('/')[0]}</div>
-      <div class="due-info"><strong>${escapeHtml(t.description)}</strong><span>${overdue?'Em atraso · ':''}${escapeHtml(t.category)}</span></div>
+      <div class="due-info"><strong>${escapeHtml(t.description)}</strong><span>${overdue?'Em atraso · ':''}${escapeHtml(categoryText(t))}</span></div>
       <div class="due-action"><span>${fmt(t.amount)}</span><button class="btn btn-outline btn-icon" data-paid-id="${escapeHtml(t.id)}" onclick="togglePaid(this.dataset.paidId)" title="Marcar como pago" aria-label="Marcar ${escapeHtml(t.description)} como pago"><i class="fas fa-check"></i></button></div>
     </div>`;
   }).join(''):`<div class="empty-state" style="padding:20px 0"><i class="fas fa-check-circle" style="font-size:28px;color:var(--success);opacity:1"></i><p>Nenhuma despesa pendente.</p><button class="btn btn-outline btn-sm" onclick="openTxModal('expense')"><i class="fas fa-plus"></i> Adicionar despesa</button></div>`;
@@ -2550,12 +2636,12 @@ function renderDashboard(){
   const today=todayStr(), cm=anchorMonth;
   const mTx=getTxForMonthProjected(cm);
   const incM=mTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-  const expM=mTx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const expM=mTx.filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0);
   const invM=getInvestmentOutflowForMonth(cm);
   const pm=prevMonth(cm);
   const pmTx=getTxForMonthProjected(pm);
   const pmInc=pmTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-  const pmExp=pmTx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const pmExp=pmTx.filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0);
 
   setMonthLabel('dash-month-lbl', cm);
   renderBalanceOverview();
@@ -2630,7 +2716,7 @@ function renderDashboard(){
   const ctxM=document.getElementById('chart-monthly');
   if(ctxM){
     const pInc=projMonths.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0));
-    const pExp=projMonths.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0));
+    const pExp=projMonths.map(m=>getTxForMonthProjected(m).filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0));
     const pInv=projMonths.map(m=>getInvestmentOutflowForMonth(m));
     const isFut=projMonths.map(m=>m>today2);
     charts['chart-monthly']=new Chart(ctxM,{
@@ -2678,7 +2764,7 @@ function renderDashboard(){
   const recent=[...mTx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
   document.getElementById('recent-tx').innerHTML=recent.length?recent.map(t=>`
     <tr><td><div style="font-weight:500">${t.description}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
-    <td><span class="badge badge-neutral">${t.category}</span></td>
+    <td>${categoryBadges(t)}</td>
     <td><span class="date-chip">${fmtDate(t.date)}</span></td>
     <td class="text-right ${t.type==='income'?'amt-income':'amt-expense'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</td></tr>
   `).join(''):`<tr><td colspan="4"><div class="empty-state"><i class="fas fa-inbox"></i><p>Nenhum lançamento ainda.<br>Adicione uma receita ou despesa para começar.</p></div></td></tr>`;
@@ -2698,14 +2784,14 @@ function renderTx(){
   const mSel=document.getElementById('tx-filter-month'), mCur=mSel.value;
   mSel.innerHTML='<option value="">Todos os meses</option>'+months.map(m=>`<option value="${m}" ${m===mCur?'selected':''}>${monthFull(m)}</option>`).join('');
 
-  const cats=[...new Set(txAll.map(t=>t.category))].sort();
+  const cats=categoryChoices(null,txAll);
   const cSel=document.getElementById('tx-filter-cat'), cCur=cSel.value;
-  cSel.innerHTML='<option value="">Todas as categorias</option>'+cats.map(c=>`<option value="${c}" ${c===cCur?'selected':''}>${c}</option>`).join('');
+  cSel.innerHTML='<option value="">Todas as categorias</option>'+categoryOptions(cats,cCur);
 
   let f=txAll;
-  if(search) f=f.filter(t=>t.description.toLowerCase().includes(search)||t.category.toLowerCase().includes(search));
+  if(search) f=f.filter(t=>t.description.toLowerCase().includes(search)||categoryText(t).toLowerCase().includes(search));
   if(type)   f=f.filter(t=>t.type===type);
-  if(cat)    f=f.filter(t=>t.category===cat);
+  if(cat)    f=f.filter(t=>matchesCategory(t,cat));
   if(month)  f=f.filter(t=>t.date.startsWith(month));
   f=f.sort((a,b)=>b.date.localeCompare(a.date));
 
@@ -2715,7 +2801,7 @@ function renderTx(){
     return `
     <tr class="${paid?'row-paid':''}">
       <td><div style="font-weight:500">${t.description}${t.isInvestment?` <span style="font-size:10px;color:var(--primary)" title="Investimento"><i class="fas fa-seedling"></i></span>`:''}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.payment?`<div class="text-xs text-muted"><i class="fas fa-credit-card" style="font-size:10px"></i> ${t.payment}</div>`:''}</td>
-      <td><span class="badge badge-neutral">${t.category}</span>${paid?` <span class="badge badge-paid" style="margin-left:4px"><i class="fas fa-check"></i> Pago</span>`:''}</td>
+      <td>${categoryBadges(t)}${paidBadge(t)}</td>
       <td><span class="badge ${t.type==='income'?'badge-success':'badge-danger'}">${t.type==='income'?'Receita':'Despesa'}</span></td>
       <td><span class="date-chip">${fmtDate(t.date)}</span></td>
       <td class="text-right ${t.type==='income'?'amt-income':'amt-expense'}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</td>
@@ -2749,20 +2835,20 @@ function renderTypeScreen(type) {
   const mTx      = txForMonth(month).filter(t => t.type === type);
   const allType  = txWindow(month,12,12).filter(t => t.type === type);
   const pm       = prevMonth(month);
-  const pmTotal  = txForMonth(pm).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
-  const mTotal   = mTx.reduce((s,t) => s+t.amount, 0);
+  const pmTotal  = txForMonth(pm).filter(t => t.type === type).reduce((s,t) => s+monthlyExpenseAmount(t), 0);
+  const advanceTotal=mTx.filter(isAdvancePaidExpense).reduce((sum,t)=>sum+num(t.amount),0);
+  const mTotal   = mTx.reduce((s,t) => s+monthlyExpenseAmount(t), 0);
   const ytdKey   = month.substr(0,4);
   const ytdTotal = txForMonths(monthsFromTo(`${ytdKey}-01`, month))
-    .filter(t => t.type === type).reduce((s,t) => s+t.amount, 0);
+    .filter(t => t.type === type).reduce((s,t) => s+monthlyExpenseAmount(t), 0);
 
   // Média mensal (últimos 6 meses)
   const last6 = lastNMonths(6);
-  const avg   = last6.map(m => txForMonth(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
+  const avg   = last6.map(m => txForMonth(m).filter(t => t.type === type).reduce((s,t) => s+monthlyExpenseAmount(t), 0));
   const avgM  = avg.reduce((s,v) => s+v, 0) / 6;
 
   // Maior categoria
-  const byCat = {};
-  mTx.forEach(t => { byCat[t.category] = (byCat[t.category]||0) + t.amount; });
+  const byCat = categoryTotals(mTx);
   const topCat = Object.entries(byCat).sort((a,b) => b[1]-a[1])[0];
 
   const pct = (a,b) => b ? Math.abs(Math.round((a-b)/b*100)) : 0;
@@ -2793,6 +2879,7 @@ function renderTypeScreen(type) {
       <div class="stat-icon ${ic}"><i class="fas ${arrow}"></i></div>
       <div class="stat-label">${isIncome?'Entradas':'Despesas'} — ${monthFull(month).split(' ')[0]}</div>
       <div class="stat-value" style="color:${color}">${fmt(mTotal)}</div>
+      ${advanceTotal?`<div class="stat-change text-muted">${fmt(advanceTotal)} pagos antecipadamente, fora deste total</div>`:''}
       ${pmTotal ? `<div class="stat-change ${isIncome?(mTotal>=pmTotal?'text-success':'text-danger'):(mTotal<=pmTotal?'text-success':'text-danger')}">
         <i class="fas fa-arrow-${isIncome?(mTotal>=pmTotal?'up':'down'):(mTotal<=pmTotal?'down':'up')}"></i>
         ${pct(mTotal,pmTotal)}% vs mês anterior</div>` : ''}
@@ -2814,21 +2901,21 @@ function renderTypeScreen(type) {
       ${topCat ? `<div class="stat-change" style="color:${color}">${fmt(topCat[1])}</div>` : ''}
     </div>
     ${!isIncome ? (() => {
-      const paidTotal   = mTx.filter(t => isPaid(t)).reduce((s,t) => s+t.amount, 0);
+      const paidTotal   = mTx.filter(t => isPaid(t)).reduce((s,t) => s+monthlyExpenseAmount(t), 0);
       const pendTotal   = mTotal - paidTotal;
       const paidPct     = mTotal > 0 ? Math.round(paidTotal/mTotal*100) : 0;
       return `
     <div class="stat-card">
       <div class="stat-icon ic-green"><i class="fas fa-check-circle"></i></div>
       <div class="stat-label">Já Pago</div>
-      <div class="stat-value text-success">${fmt(paidTotal)}</div>
-      <div class="stat-change text-muted">${paidPct}% do total</div>
+      <div class="stat-value text-success">${fmt(paidTotal+advanceTotal)}</div>
+      <div class="stat-change text-muted">${advanceTotal?`${fmt(advanceTotal)} antecipados, fora das despesas do mês`:`${paidPct}% do total`}</div>
     </div>
     <div class="stat-card">
       <div class="stat-icon ic-red"><i class="fas fa-hourglass-half"></i></div>
       <div class="stat-label">Pendente</div>
       <div class="stat-value" style="color:${pendTotal>0?'var(--danger)':'var(--success)'}">${fmt(pendTotal)}</div>
-      <div class="stat-change text-muted">${100-paidPct}% do total</div>
+      <div class="stat-change text-muted">${mTotal>0?100-paidPct:0}% do total</div>
     </div>`;
     })() : ''}
   `;
@@ -2849,7 +2936,7 @@ function renderTypeScreen(type) {
   // Barras — evolução mensal
   destroyChart(`chart-${prefix}-monthly`);
   const months6 = lastNMonths(6);
-  const monthlyData = months6.map(m => txForMonth(m).filter(t => t.type === type).reduce((s,t) => s+t.amount, 0));
+  const monthlyData = months6.map(m => txForMonth(m).filter(t => t.type === type).reduce((s,t) => s+monthlyExpenseAmount(t), 0));
   const ctx2 = document.getElementById(`chart-${prefix}-monthly`);
   if (ctx2) charts[`chart-${prefix}-monthly`] = new Chart(ctx2, {
     type: 'bar',
@@ -2862,17 +2949,14 @@ function renderTypeScreen(type) {
   const cat    = document.getElementById(`${prefix}-filter-cat`).value;
 
   // Dropdown de categorias ordenado pelo total do mês (maior primeiro)
-  const catTotals = {};
-  mTx.forEach(t => { catTotals[t.category] = (catTotals[t.category]||0) + t.amount; });
-  const cats = [...new Set(allType.map(t => t.category))]
-    .sort((a,b) => (catTotals[b]||0) - (catTotals[a]||0));
+  const cats = categoryChoices(type,allType);
   const cSel = document.getElementById(`${prefix}-filter-cat`), cCur = cSel.value;
   cSel.innerHTML = '<option value="">Todas as categorias</option>' +
-    cats.map(c => `<option value="${c}" ${c===cCur?'selected':''}>${c}${catTotals[c]?' — '+fmt(catTotals[c]):''}</option>`).join('');
+    categoryOptions(cats,cCur);
 
   let rows = mTx;
-  if (search) rows = rows.filter(t => t.description.toLowerCase().includes(search) || t.category.toLowerCase().includes(search));
-  if (cat)    rows = rows.filter(t => t.category === cat);
+  if (search) rows = rows.filter(t => t.description.toLowerCase().includes(search) || categoryText(t).toLowerCase().includes(search));
+  if (cat)    rows = rows.filter(t => matchesCategory(t,cat));
   rows = rows.sort((a,b) => b.amount - a.amount);
 
   document.getElementById(`${prefix}-count`).textContent = `${rows.length} registro(s) encontrado(s)`;
@@ -2883,17 +2967,17 @@ function renderTypeScreen(type) {
   } else if (!isIncome) {
     // ── Grouped by category (expenses only) ──
     const groups = {};
-    rows.forEach(t => { if (!groups[t.category]) groups[t.category] = []; groups[t.category].push(t); });
+    rows.forEach(t => { const group=categoryRoot(t.category); if (!groups[group]) groups[group] = []; groups[group].push(t); });
     // Sort categories by total descending
     const sortedCats = Object.keys(groups).sort((a,b) =>
-      groups[b].reduce((s,t)=>s+t.amount,0) - groups[a].reduce((s,t)=>s+t.amount,0)
+      groups[b].reduce((s,t)=>s+monthlyExpenseAmount(t),0) - groups[a].reduce((s,t)=>s+monthlyExpenseAmount(t),0)
     );
 
     const rowTpl = (t) => {
       const paid = isPaid(t);
       return `<tr class="${paid?'row-paid':''}">
         <td style="padding-left:28px"><div style="font-weight:500">${t.description}${t.isInvestment?` <span style="font-size:10px;color:var(--primary)" title="Investimento"><i class="fas fa-seedling"></i></span>`:''}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
-        <td>${paid?`<span class="badge badge-paid"><i class="fas fa-check"></i> Pago</span>`:''}</td>
+        <td>${categoryBadges(t)} ${paidBadge(t)}</td>
         <td><span class="text-sm text-muted">${t.payment||'—'}</span></td>
         <td><span class="date-chip">${fmtDate(t.date)}</span></td>
         <td class="text-right" style="color:${color};font-weight:600">-${fmt(t.amount)}</td>
@@ -2907,8 +2991,8 @@ function renderTypeScreen(type) {
 
     document.getElementById(`${prefix}-table`).innerHTML = sortedCats.map(cat => {
       const items     = groups[cat].sort((a,b) => b.amount - a.amount);
-      const catTotal  = items.reduce((s,t) => s+t.amount, 0);
-      const catPaid   = items.filter(t => isPaid(t)).reduce((s,t) => s+t.amount, 0);
+      const catTotal  = items.reduce((s,t) => s+monthlyExpenseAmount(t), 0);
+      const catPaid   = items.filter(t => isPaid(t)).reduce((s,t) => s+monthlyExpenseAmount(t), 0);
       const catPend   = catTotal - catPaid;
       const paidPct   = catTotal > 0 ? Math.round(catPaid/catTotal*100) : 0;
       const catColor  = CAT_COLORS[cat] || '#6366f1';
@@ -2919,7 +3003,7 @@ function renderTypeScreen(type) {
               <div>
                 <div class="cat-title">
                   <span style="width:10px;height:10px;border-radius:50%;background:${catColor};display:inline-block"></span>
-                  ${cat}
+                  ${escapeHtml(cat)}
                   <span class="badge badge-neutral" style="font-size:11px">${items.length}</span>
                 </div>
                 <div class="cat-meta">
@@ -2941,7 +3025,7 @@ function renderTypeScreen(type) {
       return `
       <tr class="${paid?'row-paid':''}">
         <td><div style="font-weight:500">${t.description}${t.isRecurring?` <span style="font-size:10px;color:var(--secondary)" title="Recorrente"><i class="fas fa-sync-alt"></i></span>`:''}${recurringFinalBadge(t)}</div>${t.notes?`<div class="text-xs text-muted">${t.notes}</div>`:''}</td>
-        <td><span class="badge badge-neutral">${t.category}</span>${paid?` <span class="badge badge-paid" style="margin-left:4px"><i class="fas fa-check"></i> Pago</span>`:''}</td>
+        <td>${categoryBadges(t)}${paidBadge(t)}</td>
         <td><span class="text-sm text-muted">${t.payment||'—'}</span></td>
         <td><span class="date-chip">${fmtDate(t.date)}</span></td>
         <td class="text-right" style="color:${color};font-weight:600">+${fmt(t.amount)}</td>
@@ -2958,14 +3042,14 @@ function renderIncome()   { renderTypeScreen('income'); }
 function renderExpenses() { renderTypeScreen('expense'); }
 
 function getRecurringOverview(category='',month=anchorMonth){
-  const recs=(data.recurrings||[]).filter(r=>!category || r.category===category);
+  const recs=(data.recurrings||[]).filter(r=>matchesCategory(r,category));
   const activeRecs=recs.filter(r=>getRecurringFirstMonth(r)<=month && (!r.endMonth || r.endMonth>=month));
-  const expenses=activeRecs.filter(r=>r.type==='expense');
+  const occurrences=getEffectiveTxForMonth(month);
+  const expenses=activeRecs.filter(r=>r.type==='expense').map(r=>occurrences.find(t=>t.recurringId===r.id)||r);
   const monthlyIncome=activeRecs.filter(r=>r.type==='income').reduce((sum,r)=>sum+num(r.amount),0);
-  const monthlyExp=expenses.reduce((sum,r)=>sum+num(r.amount),0);
-  const totals=new Map();
-  expenses.forEach(r=>totals.set(r.category,(totals.get(r.category)||0)+num(r.amount)));
-  const categories=[...totals.entries()].map(([name,amount])=>({name,amount,percent:monthlyExp>0?amount/monthlyExp*100:0})).sort((a,b)=>b.amount-a.amount);
+  const monthlyExp=expenses.reduce((sum,r)=>sum+monthlyExpenseAmount(r),0);
+  const totals=categoryTotals(expenses);
+  const categories=Object.entries(totals).map(([name,amount])=>({name,amount,percent:monthlyExp>0?amount/monthlyExp*100:0})).sort((a,b)=>b.amount-a.amount);
   return {recs,categories,monthlyIncome,monthlyExp,monthlyBal:monthlyIncome-monthlyExp};
 }
 
@@ -2984,11 +3068,9 @@ function renderRecurrings(){
   setMonthLabel('rec-month-lbl',month);
   updateSidebarBalance(month);
   const filter=document.getElementById('rec-filter-category');
-  const categories=[...new Set([
-    ...INCOME_CATS,...EXPENSE_CATS,...(data.recurrings||[]).map(r=>r.category)
-  ].filter(category=>typeof category==='string' && category.trim()))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  const categories=categoryChoices(null,data.recurrings||[]);
   const selected=categories.includes(filter.value)?filter.value:'';
-  filter.innerHTML='<option value="">Todas as categorias</option>'+categories.map(category=>`<option value="${escapeHtml(category)}"${category===selected?' selected':''}>${escapeHtml(category)}</option>`).join('');
+  filter.innerHTML='<option value="">Todas as categorias</option>'+categoryOptions(categories,selected);
   filter.value=selected;
   const {recs,categories:expenseCategories,monthlyIncome,monthlyExp,monthlyBal}=getRecurringOverview(selected,month);
   document.getElementById('rec-chart-subtitle').textContent=`${monthFull(month)} · ${selected||'Todas as categorias'} · ${fmt(monthlyExp)}/mês em despesas ativas`;
@@ -3013,7 +3095,7 @@ function renderRecurrings(){
         <div class="recurring-info">
           <div class="recurring-name">${r.description}</div>
           <div class="recurring-meta">
-            <i class="fas fa-tag" style="font-size:10px"></i> ${r.category}
+            <i class="fas fa-tag" style="font-size:10px"></i> ${escapeHtml(categoryText(r))}
             · Dia ${r.dayOfMonth||1} de cada mês
             · Desde ${monthFull(getRecurringFirstMonth(r))}
             ${r.endMonth ? `· Até ${r.endMonth}` : ''}
@@ -3074,7 +3156,7 @@ function editRecurring(id){
   document.getElementById('tx-end-month').value=r.endMonth||'';
   document.getElementById('recurring-opts').style.display='';
   selectTxType(r.type);
-  setTimeout(()=>{ document.getElementById('tx-cat').value=r.category; },50);
+  setCategoryPicker(r);
   openModal('modal-tx');
 }
 
@@ -3094,6 +3176,9 @@ function deleteRecurring(id){
 function removeRecurringEverywhere(id){
   data.recurrings   = (data.recurrings||[]).filter(r=>r.id!==id);
   data.transactions = (data.transactions||[]).filter(t=>t.recurringId!==id);
+  if(data.paidVirtualMonths){
+    Object.keys(data.paidVirtualMonths).forEach(k=>{ if(k.startsWith(`rec_${id}_`)) delete data.paidVirtualMonths[k]; });
+  }
   if(data.paidVirtuals){
     Object.keys(data.paidVirtuals).forEach(k=>{ if(k.startsWith(`rec_${id}_`)) delete data.paidVirtuals[k]; });
   }
@@ -3111,14 +3196,33 @@ function isPaid(t) {
   if (t.id && t.id.startsWith('rec_')) return !!((data.paidVirtuals||{})[t.id]);
   return !!t.paid;
 }
+function isAdvancePaidExpense(t){
+  if(!t||t.type!=='expense'||t.isInvestment||!t.date||!isPaid(t)) return false;
+  const paidMonth=t.id?.startsWith('rec_')?(data.paidVirtualMonths||{})[t.id]:t.paidMonth;
+  return t.date.slice(0,7)>(paidMonth||currentMonthStr());
+}
+function monthlyExpenseAmount(t){ return isAdvancePaidExpense(t)?0:num(t.amount); }
+function paidBadge(t){
+  if(!isPaid(t)) return '';
+  return isAdvancePaidExpense(t)
+    ? '<span class="badge badge-paid" title="Já descontado do saldo; não entra nas despesas deste mês"><i class="fas fa-check-double"></i> Pago antecipado</span>'
+    : '<span class="badge badge-paid"><i class="fas fa-check"></i> Pago</span>';
+}
 function togglePaid(id) {
   if (id.startsWith('inv_')) return;
   if (id.startsWith('rec_')) {
     if (!data.paidVirtuals) data.paidVirtuals = {};
     data.paidVirtuals[id] = !data.paidVirtuals[id];
+    if(!data.paidVirtualMonths) data.paidVirtualMonths={};
+    if(data.paidVirtuals[id]) data.paidVirtualMonths[id]=currentMonthStr();
+    else delete data.paidVirtualMonths[id];
   } else {
     const tx = data.transactions.find(t => t.id === id);
-    if (tx) tx.paid = !tx.paid;
+    if (tx) {
+      tx.paid = !tx.paid;
+      if(tx.paid) tx.paidMonth=currentMonthStr();
+      else delete tx.paidMonth;
+    }
   }
   scheduleSave();
   updateSidebarBalance();
@@ -3169,7 +3273,7 @@ function renderProjections() {
   const rows = months.map((ym, i) => {
     const txs  = getTxForMonthProjected(ym);
     const inc  = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-    const exp  = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+    const exp  = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0);
     const inv  = getInvestmentOutflowForMonth(ym);
     const isFuture  = ym > cm;
     const isCurrent = ym === cm;
@@ -3305,10 +3409,9 @@ function renderReports(){
   const months=lastNMonths(parseInt(document.getElementById('report-period').value));
   const f=projectedTxForMonths(months);
   const inc=f.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-  const exp=f.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const exp=f.filter(t=>t.type==='expense').reduce((s,t)=>s+monthlyExpenseAmount(t),0);
   const invOut=months.reduce((s,m)=>s+getInvestmentOutflowForMonth(m),0);
-  const byCat={};
-  f.filter(t=>t.type==='expense').forEach(t=>{ byCat[t.category]=(byCat[t.category]||0)+t.amount; });
+  const byCat=categoryTotals(f.filter(t=>t.type==='expense'));
   const topCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0];
 
   document.getElementById('report-stats').innerHTML=`
@@ -3420,7 +3523,7 @@ function editTx(id){
   document.getElementById('tx-end-month').value=t.endMonth||'';
   document.getElementById('recurring-opts').style.display=isRec?'':'none';
   selectTxType(t.type);
-  setTimeout(()=>{ document.getElementById('tx-cat').value=t.category; },50);
+  setCategoryPicker(t);
   openModal('modal-tx');
 }
 
@@ -3429,8 +3532,7 @@ function selectTxType(type){
   document.querySelectorAll('#tx-type-toggle .type-btn').forEach(b=>b.classList.remove('active'));
   document.querySelector(`#tx-type-toggle .type-btn.${type}`).classList.add('active');
   document.querySelectorAll('#tx-type-toggle .type-btn').forEach(button=>button.setAttribute('aria-pressed',String(button.classList.contains(type))));
-  const cats=type==='income'?INCOME_CATS:EXPENSE_CATS;
-  document.getElementById('tx-cat').innerHTML=cats.map(c=>`<option>${c}</option>`).join('');
+  setCategoryPicker({type});
 }
 
 function saveTx(){
@@ -3439,6 +3541,7 @@ function saveTx(){
   const amount  = parseFloat(document.getElementById('tx-amount').value);
   const date    = document.getElementById('tx-date').value;
   const cat     = document.getElementById('tx-cat').value;
+  const categories = transactionCategories({category:cat,categories:type==='expense'?selectedExtraCategories():[]});
   const payment = document.getElementById('tx-payment').value;
   const notes   = document.getElementById('tx-notes').value.trim();
   const isRec   = document.getElementById('tx-recurring').checked;
@@ -3456,13 +3559,13 @@ function saveTx(){
     // 1. Save actual transaction for the current month (shows up in Entradas/Despesas)
     data.transactions.push({
       id: uid(), type, description: desc, amount, date,
-      category: cat, payment, notes, isRecurring: true, recurringId: recId,
+      category: cat, categories, payment, notes, isRecurring: true, recurringId: recId,
       endMonth, isLastRecurringMonth: !!endMonth && endMonth===startMonth
     });
 
     // The template starts with the first occurrence; virtual generation skips it.
     if(!data.recurrings) data.recurrings=[];
-    data.recurrings.push({id:recId,type,description:desc,amount,category:cat,payment,notes,startMonth,endMonth,dayOfMonth});
+    data.recurrings.push({id:recId,type,description:desc,amount,category:cat,categories,payment,notes,startMonth,endMonth,dayOfMonth});
     showToast('Recorrência criada!','success');
   } else if(editingTxId && editingTxId.startsWith('rec_')){
     // editing a recurring template — preserve history for past months
@@ -3485,7 +3588,7 @@ function saveTx(){
         data.recurrings[i] = {...orig, endMonth: prevMonth};
         data.recurrings.push({
           id: uid(), type, description: desc, amount,
-          category: cat, payment, notes,
+          category: cat, categories, payment, notes,
           startMonth: fromMonth, endMonth, dayOfMonth
         });
         showToast(`Recorrência atualizada a partir de ${monthFull(fromMonth)}. Meses anteriores preservados.`, 'success');
@@ -3494,12 +3597,12 @@ function saveTx(){
         // Editing from the start (includes changing startMonth via date field)
         data.recurrings[i] = {
           ...orig, type, description: desc, amount,
-          category: cat, payment, notes, endMonth, dayOfMonth,
+          category: cat, categories, payment, notes, endMonth, dayOfMonth,
           startMonth: newStartMonth   // ← aplica o novo mês de início
         };
         data.transactions=data.transactions.map(t=>
           t.recurringId===orig.id && t.date.startsWith(firstMonth)
-            ? {...t,type,description:desc,amount,category:cat,payment,notes,date,
+            ? {...t,type,description:desc,amount,category:cat,categories,payment,notes,date,
                 endMonth,isLastRecurringMonth:!!endMonth&&endMonth===newStartMonth}
             : t
         );
@@ -3512,10 +3615,10 @@ function saveTx(){
       }
     }
   } else {
-    const tx={id:editingTxId||uid(),type,description:desc,amount,date,category:cat,payment,notes};
+    const tx={id:editingTxId||uid(),type,description:desc,amount,date,category:cat,categories,payment,notes};
     if(editingTxId){
       const i=data.transactions.findIndex(t=>t.id===editingTxId);
-      data.transactions[i]=tx;
+      data.transactions[i]={...data.transactions[i],...tx};
       showToast('Lançamento atualizado!','success');
     } else {
       data.transactions.push(tx);
@@ -3807,7 +3910,7 @@ function deleteInvestment(id){
 function exportCSV(){
   const months=lastNMonths(parseInt(document.getElementById('report-period').value));
   const rows=data.transactions.filter(t=>months.some(m=>t.date.startsWith(m))).sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[
-    fmtDate(t.date),t.type==='income'?'Receita':'Despesa',`"${t.description}"`,t.category,
+    fmtDate(t.date),t.type==='income'?'Receita':'Despesa',`"${t.description}"`,`"${categoryText(t).replace(/"/g,'""')}"`,
     t.amount.toFixed(2).replace('.',','),t.payment||'',`"${t.notes||''}"`
   ]);
   const csv=['Data;Tipo;Descrição;Categoria;Valor;Pagamento;Observação',...rows.map(r=>r.join(';'))].join('\n');
