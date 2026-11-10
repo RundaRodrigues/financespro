@@ -115,6 +115,10 @@ body.dark .icon-for-dark{display:inline}
 
 /* ── Sync status ── */
 .sync-status{display:flex;align-items:center;gap:6px;font-size:11px;padding:8px 16px;color:rgba(255,255,255,.5);cursor:pointer}
+.simulation-banner{display:none;align-items:center;justify-content:space-between;gap:12px;margin:0 24px 16px;padding:12px 16px;border:1px solid #f59e0b55;border-radius:12px;background:#fffbeb;color:#92400e;font-size:13px}
+.simulation-banner.active{display:flex}
+.simulation-banner-actions{display:flex;gap:8px;flex-shrink:0}
+body.dark .simulation-banner{background:#3a2f1c;color:#fcd34d;border-color:#f59e0b66}
 .sync-dot{width:8px;height:8px;border-radius:50%;background:#94a3b8;flex-shrink:0}
 .sync-dot.synced{background:var(--success)}
 .sync-dot.syncing{background:var(--warning);animation:pulse .8s infinite}
@@ -631,6 +635,7 @@ body.dark .month-picker{color-scheme:dark}
   .header-title{max-width:none;min-width:0;font-size:17px}
   .header-actions{flex-shrink:0;gap:4px}
   .header-actions .mobile-sync{display:inline-flex;color:var(--muted)}
+  .simulation-banner{margin:0 14px 12px;align-items:flex-start;flex-direction:column}
   .mobile-sync[data-state="synced"]{color:var(--success)}
   .mobile-sync[data-state="syncing"]{color:var(--warning)}
   .mobile-sync[data-state="error"],.mobile-sync[data-state="offline"]{color:var(--danger)}
@@ -1078,6 +1083,7 @@ html:has(body.dark){color-scheme:dark}
       <h1 class="header-title" id="header-title">Dashboard</h1>
     </div>
     <div class="header-actions">
+      <button class="btn btn-outline btn-sm" id="simulation-toggle" onclick="toggleSimulationMode()" title="Planejar sem alterar os dados do Google Drive"><i class="fas fa-flask"></i><span class="btn-text"> Simulador</span></button>
       <button class="btn btn-outline btn-icon mobile-sync" id="mobile-sync" onclick="syncOrSignIn()" title="Sincronizar com Google Drive" aria-label="Sincronizar com Google Drive"><i class="fas fa-cloud"></i></button>
       <button class="btn btn-outline btn-icon" id="dark-toggle" onclick="toggleDark()" title="Alternar modo escuro">
         <i class="fas fa-moon  icon-for-light"></i>
@@ -1090,6 +1096,14 @@ html:has(body.dark){color-scheme:dark}
       <button class="btn btn-danger" onclick="openTxModal('expense')"><i class="fas fa-minus"></i><span class="btn-text"> Despesa</span></button>
     </div>
   </header>
+
+  <div class="simulation-banner" id="simulation-banner" role="status">
+    <span><strong>Modo simulador ativo.</strong> Suas alterações ficam salvas somente neste dispositivo e não são enviadas ao Google Drive.</span>
+    <div class="simulation-banner-actions">
+      <button class="btn btn-outline btn-sm" onclick="resetSimulationData()"><i class="fas fa-undo"></i> Reiniciar</button>
+      <button class="btn btn-outline btn-sm" onclick="toggleSimulationMode()"><i class="fas fa-door-open"></i> Sair do simulador</button>
+    </div>
+  </div>
 
   <div class="content" id="main-content" tabindex="-1">
 
@@ -1726,11 +1740,14 @@ const INVESTMENT_TYPES = {
 const SECTION_TITLES = {dashboard:'Dashboard',transactions:'Lançamentos',income:'Entradas',expenses:'Despesas',recurrings:'Recorrências',projections:'Projeções',investments:'Investimentos',reports:'Relatórios'};
 const DRIVE_FILE_NAME = 'financas-pro-data.json';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const SIMULATION_DATA_KEY = 'gf_simulation_data_v1';
 
 // ═══════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════
 let data = { transactions:[], budgets:[], accounts:[], recurrings:[], investments:[], paidVirtuals:{}, paidVirtualMonths:{}, investmentActuals:{} };
+let simulationMode = false;
+let liveDataBeforeSimulation = null;
 let accessToken = null;
 let driveFileId  = null;
 let currentSection = 'dashboard';
@@ -1745,6 +1762,8 @@ let editingTxId  = null;
 let editingInvId = null;
 let salaryCycleOffset = localStorage.getItem('gf_salary_cycle')!=='0';
 let saveTimer = null;
+let driveSavePromise = null;
+let driveLoadPromise = null;
 const charts = {};
 
 // ═══════════════════════════════════════
@@ -1846,6 +1865,7 @@ function markDriveDisconnected() {
 }
 
 function cacheDataSnapshot() {
+  if(simulationMode){ persistSimulationData(); return; }
   try {
     saveLocalDataBackup(data, 'cache-snapshot');
     localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
@@ -1957,6 +1977,7 @@ function isDangerousDataShrink(next = {}, existing = {}) {
 }
 
 function saveLocalDataBackup(raw = data, reason = 'snapshot') {
+  if(simulationMode)return;
   if (!raw || isMeaningfullyEmpty(raw)) return;
   try {
     const backupData = JSON.parse(JSON.stringify(raw));
@@ -1982,8 +2003,12 @@ function saveLocalDataBackup(raw = data, reason = 'snapshot') {
 }
 
 function applyLoadedData(loaded) {
-  saveLocalDataBackup(data, 'before-load-from-drive');
   const normalized = normalizeDataShape(loaded);
+  if(simulationMode){
+    liveDataBeforeSimulation=normalized;
+    return hasPastRecords(loaded);
+  }
+  saveLocalDataBackup(data, 'before-load-from-drive');
   data = normalized;
   refreshCurrentSection();
   updateSidebarBalance();
@@ -2226,6 +2251,7 @@ function balanceThroughMonth(targetMonth){
 //  GOOGLE DRIVE
 // ═══════════════════════════════════════
 function setSyncStatus(state, label) {
+  if(simulationMode){ state='offline'; label='Simulador · somente local'; }
   const dot = document.getElementById('sync-dot');
   const lbl = document.getElementById('sync-label');
   dot.className = `sync-dot ${state}`;
@@ -2233,8 +2259,59 @@ function setSyncStatus(state, label) {
   const mobileSync = document.getElementById('mobile-sync');
   if(mobileSync){
     mobileSync.dataset.state = state;
-    mobileSync.title = label + ' · Sincronizar';
-    mobileSync.setAttribute('aria-label', label + '. Sincronizar com Google Drive');
+    mobileSync.title = simulationMode ? label : label + ' · Sincronizar';
+    mobileSync.setAttribute('aria-label', simulationMode ? label : label + '. Sincronizar com Google Drive');
+  }
+}
+
+function cloneFinancialData(source){
+  return normalizeDataShape(JSON.parse(JSON.stringify(source||{})));
+}
+function persistSimulationData(){
+  try { localStorage.setItem(SIMULATION_DATA_KEY,JSON.stringify(data)); }
+  catch(_) { showToast('A simulação continua ativa, mas não foi possível salvar o rascunho neste dispositivo.','error'); }
+}
+async function toggleSimulationMode(){
+  const hadPendingRealSave=!simulationMode&&saveTimer!==null;
+  clearTimeout(saveTimer);
+  saveTimer=null;
+  if(!simulationMode){
+    if(driveLoadPromise)await driveLoadPromise;
+    // Finish any pending real save before taking the live data snapshot.
+    if(driveSavePromise)await driveSavePromise;
+    else if(hadPendingRealSave)await saveToDrive({notify:false});
+    liveDataBeforeSimulation=data;
+    let savedDraft=null;
+    try { savedDraft=JSON.parse(localStorage.getItem(SIMULATION_DATA_KEY)||'null'); } catch(_) {}
+    data=cloneFinancialData(savedDraft||liveDataBeforeSimulation);
+    simulationMode=true;
+    persistSimulationData();
+  } else {
+    data=liveDataBeforeSimulation||data;
+    liveDataBeforeSimulation=null;
+    simulationMode=false;
+  }
+  renderSimulationMode();
+  refreshCurrentSection();
+  updateSidebarBalance();
+  setSyncStatus(simulationMode?'offline':'synced',simulationMode?'Simulador · somente local':'Simulação encerrada · dados reais restaurados');
+}
+function resetSimulationData(){
+  if(!simulationMode||!liveDataBeforeSimulation)return;
+  data=cloneFinancialData(liveDataBeforeSimulation);
+  persistSimulationData();
+  refreshCurrentSection();
+  updateSidebarBalance();
+  showToast('Simulação reiniciada com os dados reais atuais.');
+}
+function renderSimulationMode(){
+  const banner=document.getElementById('simulation-banner');
+  const toggle=document.getElementById('simulation-toggle');
+  if(banner)banner.classList.toggle('active',simulationMode);
+  if(toggle){
+    toggle.innerHTML=simulationMode?'<i class="fas fa-door-open"></i><span class="btn-text"> Sair do simulador</span>':'<i class="fas fa-flask"></i><span class="btn-text"> Simulador</span>';
+    toggle.title=simulationMode?'Sair e restaurar os dados reais na tela':'Planejar sem alterar os dados do Google Drive';
+    toggle.setAttribute('aria-label',simulationMode?'Sair do simulador':'Ativar modo simulador');
   }
 }
 
@@ -2318,6 +2395,16 @@ async function updateDriveFile(fileId, content) {
 }
 
 async function loadFromDrive() {
+  if(simulationMode)return;
+  if(driveLoadPromise)return driveLoadPromise;
+  const operation=loadFromDriveImpl();
+  driveLoadPromise=operation;
+  try { await operation; }
+  finally { if(driveLoadPromise===operation)driveLoadPromise=null; }
+}
+
+async function loadFromDriveImpl() {
+  if(simulationMode)return;
   try {
     setSyncStatus('syncing', 'Carregando...');
     driveFileId = await findDriveFile();
@@ -2364,7 +2451,22 @@ async function loadFromDrive() {
   }
 }
 
-async function saveToDrive({ notify = false } = {}) {
+async function saveToDrive(options = {}) {
+  if(simulationMode){
+    persistSimulationData();
+    setSyncStatus('offline','Simulador · somente local');
+    if(options.notify)showToast('Alterações salvas somente na simulação.');
+    return;
+  }
+  if(driveSavePromise)await driveSavePromise;
+  if(simulationMode)return;
+  const operation=saveToDriveImpl(options);
+  driveSavePromise=operation;
+  try { await operation; }
+  finally { if(driveSavePromise===operation)driveSavePromise=null; }
+}
+
+async function saveToDriveImpl({ notify = false } = {}) {
   if (!accessToken) {
     markLocalDirty();
     cacheDataSnapshot();
@@ -2423,12 +2525,21 @@ async function saveToDrive({ notify = false } = {}) {
 
 function scheduleSave() {
   clearTimeout(saveTimer);
+  if(simulationMode){
+    persistSimulationData();
+    setSyncStatus('offline','Simulador · somente local');
+    return;
+  }
   if (!accessToken) markLocalDirty();
   setSyncStatus('syncing', 'Aguardando...');
-  saveTimer = setTimeout(() => saveToDrive({ notify: true }), 2000);
+  saveTimer = setTimeout(() => { saveTimer=null; saveToDrive({ notify: true }); }, 2000);
 }
 
 async function syncNow() {
+  if(simulationMode){
+    showToast('A sincronização está desativada durante a simulação.');
+    return;
+  }
   clearTimeout(saveTimer);
   if (!accessToken) {
     return signIn();
@@ -2437,6 +2548,10 @@ async function syncNow() {
 }
 
 function syncOrSignIn() {
+  if(simulationMode){
+    showToast('A sincronização está desativada durante a simulação.');
+    return;
+  }
   if (!accessToken) return signIn();
   syncNow();
 }
